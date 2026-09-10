@@ -140,10 +140,10 @@ export class ImportsService {
     const grouped = new Map<string, typeof validatedRows>();
     for (const row of validatedRows) {
       const value = row.validated;
-      if (!value.normalizedName || !value.birthDate) continue;
+      if (!value.normalizedName) continue;
       const key = patientGroupingKey({
         name: value.nome ?? '',
-        birthDate: value.birthDate.toISOString().slice(0, 10),
+        birthDate: value.birthDate ? value.birthDate.toISOString().slice(0, 10) : null,
         cpf: value.normalizedCpf,
       });
       const group = grouped.get(key) ?? [];

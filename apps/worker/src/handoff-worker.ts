@@ -132,7 +132,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
   const summary = [
     'Paciente confirmou interesse em exame SUS.',
     `Paciente: ${convocation.patient.displayName}`,
-    `Nascimento: ${formatDate(convocation.patient.birthDate)}`,
+    `Nascimento: ${convocation.patient.birthDate ? formatDate(convocation.patient.birthDate) : 'Não informada'}`,
     convocation.patient.cpf ? `CPF: ${convocation.patient.cpf}` : null,
     `Telefone: ${phone}`,
     `Campanha: ${convocation.campaign.name}`,

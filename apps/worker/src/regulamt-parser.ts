@@ -78,7 +78,7 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
           ),
         ]
       : [];
-    const issues = ['Data de nascimento ausente.'];
+    const issues: string[] = [];
     if (telefones.length === 0) issues.push('Telefone ausente.');
     if (!nome) issues.unshift('Nome não identificado.');
     if (!item) issues.push('Procedimento ausente.');
@@ -90,7 +90,7 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
     ? 'Telefone extraído das colunas Telefone/Celular/WhatsApp/Fone quando presentes.'
     : 'Telefone não encontrado na planilha — coluna aceita: Telefone, Telefones, Celular, WhatsApp, Fone ou Contato (ex.: "Telefone", "Telefone 1", "Celular").';
   const warnings = [
-    `Planilha REGULAMT: nascimento e CPF/CNS não são fornecidos; ${phoneHint} Complete os registros na revisão antes de aprovar.`,
+    `Planilha REGULAMT: CPF/CNS e nascimento não são fornecidos na origem; ${phoneHint} Nascimento é opcional para aprovação. Complete os registros na revisão antes de aprovar se desejar.`,
   ];
   if (ignored) warnings.push(`${ignored} linha(s) vazia(s) foram ignoradas.`);
   return { layout: 'REGULAMT_XLSX', pageCount: 1, reportedPageCount: 1, totalReported: rows.length, rows, warnings };

@@ -17,7 +17,7 @@ export function normalizePatientName(value: string): string {
 
 export function patientGroupingKey(input: {
   name: string;
-  birthDate: string;
+  birthDate?: string | null;
   cpf?: string | null;
 }): string {
   const cpf = input.cpf?.replace(/\D/g, '');
@@ -25,7 +25,11 @@ export function patientGroupingKey(input: {
     return `CPF:${cpf}`;
   }
 
-  return `NAME_DOB:${normalizePatientName(input.name)}:${input.birthDate}`;
+  if (input.birthDate) {
+    return `NAME_DOB:${normalizePatientName(input.name)}:${input.birthDate}`;
+  }
+
+  return `NAME:${normalizePatientName(input.name)}`;
 }
 
 export function normalizeBrazilianPhone(value: string): NormalizedPhone {

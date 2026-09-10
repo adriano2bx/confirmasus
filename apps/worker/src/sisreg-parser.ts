@@ -144,7 +144,6 @@ function parseRecordBlock(rawText: string, rowNumber: number): ParsedSisregRow {
 
   if (!row.codigoConvocacaoOrigem) row.issues.push('Código da convocação ausente.');
   if (!row.nome) row.issues.push('Nome não identificado com segurança.');
-  if (!row.dataNascimento) row.issues.push('Data de nascimento ausente.');
   if (row.telefones.length === 0) row.issues.push('Telefone ausente.');
   if (!row.dataHora) row.issues.push('Data/hora ausente.');
   if (row.procedimentos.length === 0) row.issues.push('Procedimento ausente.');
@@ -422,7 +421,6 @@ function parsePositionedRecord(
     issues: [],
   };
   if (!row.nome) row.issues.push('Nome não identificado com segurança.');
-  if (!row.dataNascimento) row.issues.push('Data de nascimento ausente.');
   if (row.telefones.length === 0) row.issues.push('Telefone ausente.');
   if (!row.dataHora) row.issues.push('Data/hora ausente.');
   if (row.procedimentos.length === 0) row.issues.push('Procedimento ausente.');

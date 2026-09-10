@@ -18,7 +18,6 @@ export interface SisregAiFallbackConfig {
 
 const REQUIRED_ISSUES = new Set([
   'Nome não identificado com segurança.',
-  'Data de nascimento ausente.',
   'Telefone ausente.',
   'Data/hora ausente.',
   'Procedimento ausente.',

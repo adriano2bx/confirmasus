@@ -160,7 +160,7 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   if (!row.codigoConvocacaoOrigem) issues.push('Código da convocação ausente.');
   if (!row.nome || normalizePatientName(row.nome).length < 3)
     issues.push('Nome inválido ou ausente.');
-  if (!birthDate) issues.push('Data de nascimento inválida ou ausente.');
+  if (row.dataNascimento && !birthDate) issues.push('Data de nascimento inválida.');
   if (!selectWhatsAppPhone(phones)) issues.push('Nenhum telefone celular válido para WhatsApp.');
   if (selectedPhone && (!selectedPhone.valid || !selectedPhone.mobile)) {
     issues.push('O telefone selecionado para WhatsApp não é um celular válido.');

@@ -659,11 +659,10 @@ function EditRowModal({
         <div className="panel-body form-grid">
           <Field label="Nome completo" name="nome" defaultValue={data.nome ?? ''} required wide />
           <Field
-            label="Data de nascimento"
+            label="Data de nascimento (opcional)"
             name="dataNascimento"
             defaultValue={data.dataNascimento ?? ''}
             placeholder="DD/MM/AAAA"
-            required
           />
           <Field label="CPF (opcional)" name="cpf" defaultValue={data.cpf ?? ''} />
           <Field label="CNS (opcional)" name="cns" defaultValue={data.cns ?? ''} />

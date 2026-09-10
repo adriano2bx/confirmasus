@@ -51,10 +51,10 @@ export class CampaignsService {
       const groups = new Map<string, typeof imported.sourceRecords>();
       for (const record of imported.sourceRecords) {
         const row = readImportedRow(record.importRow.normalizedData);
-        if (!row.nome || !row.dataNascimento) continue;
+        if (!row.nome) continue;
         const key = patientGroupingKey({
           name: row.nome,
-          birthDate: toIsoDate(row.dataNascimento),
+          birthDate: row.dataNascimento ? toIsoDate(row.dataNascimento) : null,
           cpf: row.cpf,
         });
         const group = groups.get(key) ?? [];
@@ -66,11 +66,13 @@ export class CampaignsService {
         const first = records[0];
         if (!first) continue;
         const row = readImportedRow(first.importRow.normalizedData);
-        if (!row.nome || !row.dataNascimento) continue;
+        if (!row.nome) continue;
         const importedRows = records.map((record) =>
           readImportedRow(record.importRow.normalizedData),
         );
-        const birthDate = new Date(`${toIsoDate(row.dataNascimento)}T00:00:00.000Z`);
+        const birthDate = row.dataNascimento
+          ? new Date(`${toIsoDate(row.dataNascimento)}T00:00:00.000Z`)
+          : null;
         const cpf = row.cpf?.replace(/\D/g, '') || null;
         const cns =
           importedRows
@@ -78,7 +80,11 @@ export class CampaignsService {
             .find((value) => value?.length === 15) ?? null;
         const normalizedName = normalizePatientName(row.nome);
         const existingPatient = await transaction.patient.findFirst({
-          where: cpf ? { cpf } : { normalizedName, birthDate },
+          where: cpf
+            ? { cpf }
+            : birthDate
+              ? { normalizedName, birthDate }
+              : { normalizedName, birthDate: null },
         });
         const patient = existingPatient
           ? await transaction.patient.update({
@@ -88,13 +94,14 @@ export class CampaignsService {
                 normalizedName,
                 ...(cpf ? { cpf } : {}),
                 ...(cns ? { cns } : {}),
+                ...(birthDate ? { birthDate } : {}),
               },
             })
           : await transaction.patient.create({
               data: {
                 displayName: row.nome,
                 normalizedName,
-                birthDate,
+                ...(birthDate ? { birthDate } : { birthDate: null }),
                 ...(cpf ? { cpf } : {}),
                 ...(cns ? { cns } : {}),
               },
