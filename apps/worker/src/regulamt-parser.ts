@@ -38,6 +38,12 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
   const itemColumn = column('Item', 'Procedimento');
   const appointmentColumn = column('Data agendamento', 'Data do agendamento');
   const idColumn = column('ID', 'Código');
+  // Suporte a Telefone/Celular/WhatsApp/Fone/Contato (ex.: "Telefone", "Celular", "WhatsApp", "Telefone 1", "Fone")
+  const phoneColumns = [...headers.entries()]
+    .filter(([name]) =>
+      ['telefone', 'celular', 'whatsapp', 'fone', 'contato'].some((key) => name.includes(key)),
+    )
+    .map(([, col]) => col);
   if (!patientColumn || !itemColumn) {
     return { layout: 'REGULAMT_XLSX', pageCount: 1, reportedPageCount: 0, totalReported: 0, rows: [], warnings: ['Cabeçalho incompatível: esperado ao menos Paciente e Item.'] };
   }
@@ -51,14 +57,41 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
     if (!nome && !item) { ignored += 1; continue; }
     const dataHora = appointmentColumn ? formatDate(row.getCell(appointmentColumn).value) : null;
     const codigo = idColumn ? String(row.getCell(idColumn).value ?? '').trim() || null : null;
-    const issues = ['Data de nascimento ausente.', 'Telefone ausente.'];
+    const telefones = phoneColumns.length
+      ? [
+          ...new Set(
+            phoneColumns
+              .flatMap((col) => {
+                const raw = row.getCell(col).value;
+                if (raw == null || raw === '') return [];
+                const text = String(raw).trim();
+                if (!text) return [];
+                // Aceita múltiplos números numa mesma célula separados por , ; / | quebra de linha ou " e "
+                return text
+                  .split(/[,;\/|\n]+/)
+                  .flatMap((part) => part.split(/\s+e\s+/i))
+                  .map((part) => part.trim())
+                  .filter(Boolean);
+              })
+              .map((phone) => phone.trim())
+              .filter(Boolean),
+          ),
+        ]
+      : [];
+    const issues = ['Data de nascimento ausente.'];
+    if (telefones.length === 0) issues.push('Telefone ausente.');
     if (!nome) issues.unshift('Nome não identificado.');
     if (!item) issues.push('Procedimento ausente.');
     if (!dataHora) issues.push('Data/hora ausente.');
     const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-    rows.push({ rowNumber, rawText: values.map((value: unknown) => String(value ?? '')).join(' | '), codigoConvocacaoOrigem: codigo, nome, dataNascimento: null, cpf: null, cns: null, telefones: [], dataHora, procedimentos: item ? [item] : [], issues });
+    rows.push({ rowNumber, rawText: values.map((value: unknown) => String(value ?? '')).join(' | '), codigoConvocacaoOrigem: codigo, nome, dataNascimento: null, cpf: null, cns: null, telefones, dataHora, procedimentos: item ? [item] : [], issues });
   }
-  const warnings = ['Planilha REGULAMT: nascimento, CPF/CNS e telefone não são fornecidos; complete os registros na revisão antes de aprovar.'];
+  const phoneHint = phoneColumns.length
+    ? 'Telefone extraído das colunas Telefone/Celular/WhatsApp/Fone quando presentes.'
+    : 'Telefone não encontrado na planilha — coluna aceita: Telefone, Telefones, Celular, WhatsApp, Fone ou Contato (ex.: "Telefone", "Telefone 1", "Celular").';
+  const warnings = [
+    `Planilha REGULAMT: nascimento e CPF/CNS não são fornecidos; ${phoneHint} Complete os registros na revisão antes de aprovar.`,
+  ];
   if (ignored) warnings.push(`${ignored} linha(s) vazia(s) foram ignoradas.`);
   return { layout: 'REGULAMT_XLSX', pageCount: 1, reportedPageCount: 1, totalReported: rows.length, rows, warnings };
 }
