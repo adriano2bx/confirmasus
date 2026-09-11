@@ -146,6 +146,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     .filter(Boolean)
     .join('\n');
 
+  const createdAt = formatZonedIso(new Date(), process.env.APP_TIMEZONE ?? 'America/Sao_Paulo');
   return {
     orgId: config.orgId,
     webhook: config.webhook,
@@ -153,11 +154,20 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     channelId: config.channelId,
     queueId: config.queueId,
     channelType: config.channelType,
-    createdAt: formatZonedIso(new Date(), process.env.APP_TIMEZONE ?? 'America/Sao_Paulo'),
+    createdAt,
     mobile: phone,
     name: convocation.patient.displayName,
     photo: null,
-    messages: [{ type: 'text', text: summary }],
+    messages: [
+      {
+        senderType: 'system',
+        type: 'text',
+        createdAt,
+        text: summary,
+        url: null,
+        mimeType: null,
+      },
+    ],
     scheduleOffset: 0,
     escalated: true,
     close: false,
