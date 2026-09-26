@@ -9,7 +9,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test"
+    "test": "pnpm build && node dist/webhooks/webhooks.service.test.js"
   },
   "dependencies": {
     "@confirma/database": "workspace:*",

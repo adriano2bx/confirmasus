@@ -1,73 +1,74 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { Prisma, prisma } from '@confirma/database';
 import type { ProcessWebhookJob } from '@confirma/queue';
 import type { Queue } from 'bullmq';
 import { WEBHOOK_QUEUE } from './webhooks.constants.js';
 
-interface GupshupEnvelope {
-  app?: unknown;
-  type?: unknown;
-  timestamp?: unknown;
-  payload?: unknown;
-}
+type JsonRecord = Record<string, unknown>;
 
 @Injectable()
 export class WebhooksService {
   constructor(@Inject(WEBHOOK_QUEUE) private readonly queue: Queue<ProcessWebhookJob>) {}
 
-  async receive(value: unknown, secret?: string) {
-    const expected = process.env.GUPSHUP_WEBHOOK_SECRET;
+  verify(mode?: string, token?: string, challenge?: string): string {
     if (
-      expected &&
-      (!secret ||
-        secret.length !== expected.length ||
-        !timingSafeEqual(Buffer.from(secret), Buffer.from(expected)))
+      mode !== 'subscribe' ||
+      !token ||
+      !challenge ||
+      !safeEqual(token, process.env.META_WEBHOOK_VERIFY_TOKEN ?? '')
     ) {
-      throw new ForbiddenException('Assinatura do webhook inválida');
+      throw new ForbiddenException('Verificação do webhook Meta inválida');
     }
+    return challenge;
+  }
+
+  async receive(value: unknown, signature: string | undefined, rawBody: Buffer | undefined) {
+    this.verifySignature(signature, rawBody);
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new BadRequestException('Payload de webhook inválido');
     }
-    const event = value as GupshupEnvelope;
-    if (typeof event.type !== 'string' || !event.payload || typeof event.payload !== 'object') {
-      throw new BadRequestException('Evento Gupshup sem tipo ou payload');
-    }
-    const expectedApp = process.env.GUPSHUP_APP_NAME;
-    if (expectedApp && event.app !== expectedApp) {
-      throw new ForbiddenException('Evento recebido para uma aplicação Gupshup diferente');
-    }
-    const eventType = event.type.toLowerCase();
-    const payload = event.payload as Record<string, unknown>;
-    const providerMessageId = providerMessageIdFor(eventType, payload);
-    const providerEventId = stringValue(payload.id);
-    const deduplicationKey = eventDeduplicationKey(eventType, payload);
+    const events = normalizeMetaEvents(value as JsonRecord);
+    for (const event of events) await this.persistAndQueue(event);
+  }
 
-    let existing = await prisma.messageEvent.findUnique({ where: { deduplicationKey } });
-    let stored = existing;
+  private verifySignature(signature: string | undefined, rawBody: Buffer | undefined) {
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appSecret || !signature || !rawBody) {
+      throw new ForbiddenException('Assinatura do webhook Meta ausente');
+    }
+    const expected = `sha256=${createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+    if (!safeEqual(signature, expected))
+      throw new ForbiddenException('Assinatura do webhook inválida');
+  }
+
+  private async persistAndQueue(value: JsonRecord) {
+    const type = String(value.type ?? 'unknown');
+    const payload = record(value.payload);
+    const identity = String(payload.id ?? '');
+    const timestamp = String(value.timestamp ?? '');
+    const deduplicationKey = createHash('sha256')
+      .update(JSON.stringify({ type, identity, timestamp, payload }))
+      .digest('hex');
+    let stored = await prisma.messageEvent.findUnique({ where: { deduplicationKey } });
     if (!stored) {
       try {
         stored = await prisma.messageEvent.create({
           data: {
-            providerMessageId,
-            providerEventId,
-            eventType,
+            providerMessageId: identity || null,
+            providerEventId: identity || null,
+            eventType: type,
             deduplicationKey,
             payload: value as Prisma.InputJsonValue,
           },
         });
       } catch (error) {
-        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
           throw error;
-        }
-        existing = await prisma.messageEvent.findUnique({ where: { deduplicationKey } });
-        if (!existing) throw error;
-        stored = existing;
+        stored = await prisma.messageEvent.findUnique({ where: { deduplicationKey } });
       }
     }
     if (!stored) throw new Error('Não foi possível persistir o evento do webhook');
-    // Reenfileirar também um evento que já havia sido persistido. Assim, se a API
-    // cair entre o INSERT e o Redis, a próxima entrega do provedor recupera o fluxo.
     if (stored.processingStatus === 'PENDING') {
       await this.queue.add(
         'process-webhook',
@@ -84,43 +85,116 @@ export class WebhooksService {
   }
 }
 
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
+export function normalizeMetaEvents(body: JsonRecord): JsonRecord[] {
+  if (body.object !== 'whatsapp_business_account' || !Array.isArray(body.entry)) {
+    throw new BadRequestException('Evento recebido não é uma notificação WhatsApp da Meta');
+  }
+  const events: JsonRecord[] = [];
+  for (const entryValue of body.entry) {
+    const entry = record(entryValue);
+    for (const changeValue of Array.isArray(entry.changes) ? entry.changes : []) {
+      const change = record(changeValue);
+      if (change.field !== 'messages') continue;
+      const value = record(change.value);
+      for (const statusValue of Array.isArray(value.statuses) ? value.statuses : []) {
+        const status = record(statusValue);
+        const errors = Array.isArray(status.errors) ? record(status.errors[0]) : {};
+        const pricing = record(status.pricing);
+        events.push(
+          compact({
+            type: 'message-event',
+            timestamp: status.timestamp,
+            payload: {
+              id: status.id,
+              type: status.status,
+              payload: {
+                ts: status.timestamp,
+                code: errors.code,
+                reason: record(errors.error_data).details ?? errors.title ?? errors.message,
+              },
+            },
+          }),
+        );
+        if (Object.keys(pricing).length > 0) {
+          events.push(
+            compact({
+              type: 'billing-event',
+              timestamp: status.timestamp,
+              payload: {
+                id: status.id,
+                providerEventId: `${String(status.id ?? 'unknown')}:${String(status.status ?? 'unknown')}:${String(status.timestamp ?? 'unknown')}`,
+                payload: {
+                  status: status.status,
+                  billable: pricing.billable,
+                  category: pricing.category,
+                  pricing_model: pricing.pricing_model,
+                  pricing,
+                },
+              },
+            }),
+          );
+        }
+      }
+      for (const messageValue of Array.isArray(value.messages) ? value.messages : []) {
+        const message = record(messageValue);
+        const interactive = record(message.interactive);
+        const button = record(message.button);
+        const buttonReply = record(interactive.button_reply);
+        const listReply = record(interactive.list_reply);
+        const context = record(message.context);
+        const textBody = record(message.text);
+        const isButton = message.type === 'button' || message.type === 'interactive';
+        const text = String(
+          button.text ??
+            buttonReply.title ??
+            buttonReply.id ??
+            listReply.title ??
+            listReply.id ??
+            textBody.body ??
+            '',
+        );
+        events.push(
+          compact({
+            type: 'message',
+            timestamp: message.timestamp,
+            payload: {
+              id: message.id,
+              source: message.from,
+              context: { id: context.id },
+              type: isButton ? 'button_reply' : message.type,
+              payload: {
+                type: isButton ? 'button' : message.type,
+                text,
+                title: text,
+                buttonPayload: button.payload ?? buttonReply.id,
+              },
+            },
+          }),
+        );
+      }
+    }
+  }
+  return events;
 }
 
-function contextGsId(payload: Record<string, unknown>): string | null {
-  const context = payload.context;
-  return context && typeof context === 'object'
-    ? stringValue((context as Record<string, unknown>).gsId)
-    : null;
+function record(value: unknown): JsonRecord {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
-function providerMessageIdFor(type: string, payload: Record<string, unknown>): string | null {
-  return (
-    stringValue(payload.gsId) ??
-    contextGsId(payload) ??
-    (['message-event', 'billing-event', 'billing'].includes(type) ? stringValue(payload.id) : null)
+function compact(value: unknown): JsonRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => [
+        key,
+        item && typeof item === 'object' && !Array.isArray(item) ? compact(item) : item,
+      ]),
   );
 }
 
-function eventDeduplicationKey(type: string, payload: Record<string, unknown>): string {
-  const details = recordValue(payload.payload);
-  const subtype = stringValue(payload.type)?.toLowerCase() ?? '';
-  const identity =
-    type === 'message'
-      ? stringValue(payload.id)
-      : (stringValue(payload.gsId) ?? stringValue(payload.id) ?? contextGsId(payload));
-  const eventTime = scalarValue(details.ts) ?? scalarValue(payload.timestamp);
-  const stable = identity ? { type, subtype, identity, eventTime } : { type, subtype, payload };
-  return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
-}
-
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function scalarValue(value: unknown): string | number | null {
-  return typeof value === 'string' || typeof value === 'number' ? value : null;
+function safeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

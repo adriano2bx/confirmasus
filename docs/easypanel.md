@@ -24,6 +24,12 @@ Configure `DATABASE_URL`, `REDIS_URL` e todas as demais variáveis desta página
 como variáveis de ambiente em tempo de execução. Secrets não devem ser
 configurados apenas como argumentos de build.
 
+Cadastre e aprove no WhatsApp Manager os três modelos usados nas convocações,
+com idioma `pt_BR`, um parâmetro de texto no corpo para o nome do paciente e
+botões de resposta rápida nesta ordem: `Confirmar` e `Cancelar`. O envio associa
+os payloads `CONFIRM` e `CANCEL` aos índices 0 e 1 desses botões.
+Use os nomes exatos dos modelos nas variáveis `META_TEMPLATE_*_NAME`.
+
 ## Opção para escala independente: três serviços
 
 Crie serviços separados a partir do mesmo repositório Git:
@@ -47,13 +53,12 @@ DATABASE_URL=<URL interna do PostgreSQL com ?schema=public>
 REDIS_URL=<URL interna do Redis>
 JWT_SECRET=<texto aleatório com no mínimo 32 caracteres>
 UPLOAD_TEMP_DIR=/tmp/confirma-sus
-GUPSHUP_SOURCE=15559618824
-GUPSHUP_APP_NAME=DoctorbotConfirma
-GUPSHUP_API_URL=https://api.gupshup.io/wa/api/v1/template/msg
-GUPSHUP_SESSION_MESSAGE_URL=https://api.gupshup.io/wa/api/v1/msg
-GUPSHUP_TEMPLATE_FIRST_ID=dc67c2dc-3102-445d-ba77-7662243a2e42
-GUPSHUP_TEMPLATE_SECOND_ID=ec210fc3-744a-4d6a-ad00-14304e9858c1
-GUPSHUP_TEMPLATE_THIRD_ID=0598c34a-dca7-4ae9-b1a6-10defc9bcd89
+META_WHATSAPP_PHONE_NUMBER_ID=<ID do número no WhatsApp Manager>
+META_WHATSAPP_LANGUAGE=pt_BR
+META_GRAPH_API_VERSION=v22.0
+META_TEMPLATE_FIRST_NAME=primeira_convocacao_sus_unico
+META_TEMPLATE_SECOND_NAME=segunda_convocacao_sus
+META_TEMPLATE_THIRD_NAME=terceira_convocacao_sus
 AUTOMATIC_REPLY_ENABLED=true
 AUTOMATIC_REPLY_CONFIRM_TEXT=Recebemos sua confirmação. Aguarde, em breve nossa equipe dará continuidade ao atendimento.
 AUTOMATIC_REPLY_CANCEL_TEXT=Seu cancelamento foi registrado. Não enviaremos novas convocações referentes a esta solicitação.
@@ -63,7 +68,7 @@ Defina exclusivamente no `confirma-worker`:
 
 ```text
 MESSAGING_MODE=DRY_RUN
-GUPSHUP_API_KEY=<secret configurado no EasyPanel>
+META_WHATSAPP_ACCESS_TOKEN=<token permanente da Meta>
 SCHEDULER_INTERVAL_MS=10000
 MESSAGE_WORKER_CONCURRENCY=5
 WEBHOOK_WORKER_CONCURRENCY=10
@@ -107,29 +112,31 @@ JWT_EXPIRES_IN=8h
 ADMIN_NAME=Administrador
 ADMIN_EMAIL=<e-mail de acesso>
 ADMIN_PASSWORD=<senha forte com ao menos 12 caracteres>
-# Deixe vazio ao receber a Gupshup diretamente. Preencha somente se um proxy
-# confiável inserir o cabeçalho x-confirma-webhook-secret antes da API.
-GUPSHUP_WEBHOOK_SECRET=
+META_APP_SECRET=<app secret da Meta>
+META_WEBHOOK_VERIFY_TOKEN=<token de verificação escolhido por você>
 ```
 
 A API aplica as migrations e cria/atualiza automaticamente o administrador a cada inicialização. A senha é lida somente de `ADMIN_PASSWORD`; assim, alterar essa variável e reiniciar a API faz a rotação sem seed, terminal ou comando manual.
 
 ## Ordem de publicação
 
+Ao substituir uma implantação Gupshup pela versão Meta, finalize as campanhas
+Gupshup e aguarde suas respostas pendentes antes da troca. Esta branch recebe
+somente webhooks da Meta; respostas antigas enviadas ao callback Gupshup não
+serão processadas por ela.
+
 1. Crie PostgreSQL e Redis.
 2. Crie API, web e worker pelo Git, configure as variáveis e publique. Não há comandos de bootstrap a executar: a API aplica migrations e provisiona o login automaticamente.
 3. Publique inicialmente o worker com `MESSAGING_MODE=DRY_RUN` e `HANDOFF_MODE=DISABLED`.
-4. Configure na Gupshup o callback público: `https://api.seu-dominio.com/api/webhooks/gupshup`, habilitando `enqueued`, `sent`, `delivered`, `read`, `failed`, eventos de cobrança e mensagens recebidas.
+4. Configure no painel de desenvolvedores Meta o callback HTTPS `https://api.seu-dominio.com/api/webhooks/meta`, use `META_WEBHOOK_VERIFY_TOKEN` e assine o campo `messages` da conta WhatsApp Business.
 5. Faça uma campanha de homologação e confira banco, filas e painel.
 6. Quando aprovado, altere as duas chaves de modo para `MESSAGING_MODE=LIVE` e `HANDOFF_MODE=LIVE`; o EasyPanel reinicia os containers automaticamente.
 
 ## Segurança operacional
 
-- `GUPSHUP_API_KEY` é secret, nunca variável de build, arquivo `.env` versionado ou configuração do frontend.
-- Como a chave anterior foi compartilhada, rotacione-a no painel Gupshup antes da produção.
+- `META_WHATSAPP_ACCESS_TOKEN` e `META_APP_SECRET` são secrets, nunca variáveis de build, arquivo `.env` versionado ou configuração do frontend.
 - Mantenha `DRY_RUN` até concluir a homologação do webhook.
 - Configure os valores `VIEW_EASYSAC_*` apenas como secrets do worker. Uma confirmação por botão cria um único transbordo idempotente, contendo o resumo do paciente e das solicitações; erros são reprocessados automaticamente até o limite configurado.
 - Ative HTTPS no domínio API antes de registrar o webhook.
-- Não configure `GUPSHUP_WEBHOOK_SECRET` esperando que a Gupshup envie esse cabeçalho. A variável serve somente quando um proxy reverso confiável o adiciona. Para chamadas diretas da Gupshup, mantenha-a vazia e restrinja a origem no proxy/firewall pelos IPs oficiais fornecidos pelo suporte da Gupshup.
-- O endpoint valida também o campo `app` do payload contra `GUPSHUP_APP_NAME`, persiste o evento e responde `HTTP 204` antes de o worker executar as regras de negócio.
+- O endpoint valida `X-Hub-Signature-256` com o app secret da Meta, persiste cada status/mensagem e responde `HTTP 204` antes de o worker executar as regras de negócio.
 - Faça backup externo recorrente do PostgreSQL antes do piloto.

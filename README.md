@@ -30,7 +30,7 @@ Monorepo do MVP de automação das convocações SUS por WhatsApp.
 7. Consulte o painel em `/painel`, a lista em `/convocacoes` e exporte CSVs pelas rotas protegidas de relatórios.
 8. O administrador provisionado por `ADMIN_*` pode criar, desativar e redefinir a senha de operadores persistidos no PostgreSQL.
 
-Campanhas podem ser programadas e executadas por scheduler. O envio começa em `DRY_RUN`; somente o worker com `MESSAGING_MODE=LIVE` e secrets Gupshup configurados realiza disparos reais. O webhook está disponível em `/api/webhooks/gupshup`.
+Campanhas podem ser programadas e executadas por scheduler. O envio começa em `DRY_RUN`; somente o worker com `MESSAGING_MODE=LIVE` e credenciais da WhatsApp Cloud API configuradas realiza disparos reais. O webhook da Meta está disponível em `/api/webhooks/meta`.
 
 O PDF é temporário: o arquivo só deverá ser removido depois que seus dados forem
 persistidos. O PostgreSQL é a fonte de verdade dos agendamentos; Redis/BullMQ serve
@@ -46,6 +46,5 @@ Para medir a capacidade da API em homologação, consulte o [guia de teste de ca
 ## Pendências antes do piloto
 
 - Validar e ajustar o parser contra PDFs SISREG reais anonimizados.
-- Configurar domínio HTTPS, callback Gupshup e secrets no EasyPanel.
-- Homologar payloads reais de cobrança Gupshup para confirmar os campos de custo recebidos.
+- Configurar domínio HTTPS, callback de webhooks da Meta e secrets no EasyPanel.
 - Configurar backup externo recorrente do PostgreSQL e executar um teste de restauração.
