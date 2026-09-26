@@ -26,8 +26,11 @@ configurados apenas como argumentos de build.
 
 Cadastre e aprove no WhatsApp Manager os três modelos usados nas convocações,
 com idioma `pt_BR`, um parâmetro de texto no corpo para o nome do paciente e
-botões de resposta rápida nesta ordem: `Confirmar` e `Cancelar`. O envio associa
-os payloads `CONFIRM` e `CANCEL` aos índices 0 e 1 desses botões.
+dois botões de resposta rápida nesta ordem: confirmação e cancelamento. Os
+modelos atualmente aprovados usam os textos `Confirmar` / `Cancelar` na primeira
+etapa, `Quero confirmar` / `Quero Cancelar` na segunda e `Vou Confirmar` /
+`Vou cancelar` na terceira. O envio associa os payloads `CONFIRM` e `CANCEL`
+aos índices 0 e 1 desses botões.
 Use os nomes exatos dos modelos nas variáveis `META_TEMPLATE_*_NAME`.
 
 ## Opção para escala independente: três serviços
