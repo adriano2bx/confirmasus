@@ -173,6 +173,7 @@ export default function ImportReviewPage() {
     if (!editing) return;
     setLoading(true);
     const data = new FormData(event.currentTarget);
+    const whatsApp = String(data.get('selectedPhone') ?? '').trim();
     try {
       await request(`/imports/${params.id}/rows/${editing.id}`, {
         method: 'PATCH',
@@ -183,11 +184,8 @@ export default function ImportReviewPage() {
           dataNascimento: data.get('dataNascimento'),
           cpf: data.get('cpf'),
           cns: data.get('cns'),
-          telefones: String(data.get('telefones') ?? '')
-            .split(/\n|,/)
-            .map((v) => v.trim())
-            .filter(Boolean),
-          selectedPhone: data.get('selectedPhone'),
+          telefones: [whatsApp],
+          selectedPhone: whatsApp,
           dataHora: data.get('dataHora'),
           procedimentos: String(data.get('procedimentos') ?? '')
             .split('\n')
@@ -602,7 +600,6 @@ function PatientsReview({
               <div>
                 <span className="stat-label">WhatsApp selecionado</span>
                 <strong>{group.selectedPhone || 'Nenhum número válido'}</strong>
-                <small>{group.phones.length} telefone(s) preservado(s)</small>
               </div>
               <div>
                 <span className="stat-label">Procedimentos</span>
@@ -632,6 +629,7 @@ function EditRowModal({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const data = row.data ?? {};
+  const whatsApp = data.selectedPhone?.trim() || data.telefones?.find((phone) => phone.trim()) || '';
   return (
     <div
       className="modal-backdrop"
@@ -679,21 +677,14 @@ function EditRowModal({
             placeholder="DD/MM/AAAA HH:mm"
             required
           />
-          <label className="field wide">
-            <span>
-              Telefones <small>(um por linha)</small>
-            </span>
-            <textarea
-              name="telefones"
-              defaultValue={(data.telefones ?? []).join('\n')}
-              rows={3}
-              required
-            />
-          </label>
           <Field
-            label="WhatsApp selecionado"
+            label="WhatsApp"
             name="selectedPhone"
-            defaultValue={data.selectedPhone ?? data.telefones?.[0] ?? ''}
+            defaultValue={whatsApp}
+            type="tel"
+            autoComplete="tel"
+            required
+            wide
           />
           <label className="field wide">
             <span>
