@@ -91,6 +91,7 @@ export default function ImportReviewPage() {
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ImportRow | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [showApproval, setShowApproval] = useState(false);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [campaignStatus, setCampaignStatus] = useState<string | null>(null);
@@ -193,14 +194,12 @@ export default function ImportReviewPage() {
             .filter(Boolean),
         }),
       });
+      setEditError(null);
       setEditing(null);
       await load(true);
       setNotice({ tone: 'success', text: 'Registro atualizado e validado novamente.' });
     } catch (error) {
-      setNotice({
-        tone: 'error',
-        text: error instanceof Error ? error.message : 'Não foi possível salvar',
-      });
+      setEditError(error instanceof Error ? error.message : 'Não foi possível salvar');
     } finally {
       setLoading(false);
     }
@@ -361,7 +360,10 @@ export default function ImportReviewPage() {
             setPage(1);
           }}
           onPage={setPage}
-          onEdit={setEditing}
+          onEdit={(row) => {
+            setEditError(null);
+            setEditing(row);
+          }}
           onContinue={() => setPhase('patients')}
         />
       ) : !approved ? (
@@ -380,7 +382,11 @@ export default function ImportReviewPage() {
         <EditRowModal
           row={editing}
           loading={loading}
-          onClose={() => setEditing(null)}
+          error={editError}
+          onClose={() => {
+            setEditError(null);
+            setEditing(null);
+          }}
           onSubmit={saveRow}
         />
       ) : null}
@@ -620,11 +626,13 @@ function PatientsReview({
 function EditRowModal({
   row,
   loading,
+  error,
   onClose,
   onSubmit,
 }: {
   row: ImportRow;
   loading: boolean;
+  error: string | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -655,6 +663,11 @@ function EditRowModal({
           </button>
         </header>
         <div className="panel-body form-grid">
+          {error ? (
+            <div className="wide">
+              <Feedback tone="error">{error}</Feedback>
+            </div>
+          ) : null}
           <Field label="Nome completo" name="nome" defaultValue={data.nome ?? ''} required wide />
           <Field
             label="Data de nascimento (opcional)"
