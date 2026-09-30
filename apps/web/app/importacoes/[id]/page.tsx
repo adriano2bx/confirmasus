@@ -181,7 +181,7 @@ export default function ImportReviewPage() {
         body: JSON.stringify({
           codigoConvocacaoOrigem: data.get('codigoConvocacaoOrigem'),
           nome: data.get('nome'),
-          dataNascimento: data.get('dataNascimento'),
+          dataNascimento: String(data.get('dataNascimento') ?? '').trim() || null,
           cpf: data.get('cpf'),
           cns: data.get('cns'),
           telefones: [whatsApp],
