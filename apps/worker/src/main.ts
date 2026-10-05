@@ -40,8 +40,15 @@ const worker = new Worker<ParseImportJob>(
       return;
     }
     const data = await readFile(temporaryPath);
-    const sourceFile = await prisma.importFile.findUnique({ where: { id: importFileId }, select: { mimeType: true } });
-    let parsed = sourceFile?.mimeType.includes('spreadsheet') || sourceFile?.mimeType === 'application/zip'
+    const sourceFile = await prisma.importFile.findUnique({
+      where: { id: importFileId },
+      select: { mimeType: true, originalName: true },
+    });
+    const isSpreadsheet =
+      sourceFile?.mimeType.includes('spreadsheet') ||
+      sourceFile?.mimeType === 'application/zip' ||
+      sourceFile?.originalName.toLowerCase().endsWith('.xlsx');
+    let parsed = isSpreadsheet
       ? await parseRegulamtXlsx(new Uint8Array(data))
       : await parseSisregPdf(new Uint8Array(data));
     try {
@@ -104,7 +111,8 @@ const worker = new Worker<ParseImportJob>(
             invalid: 0,
           },
           status:
-            (parsed.layout === 'SISREG_V1' || parsed.layout === 'REGULAMT_XLSX') && parsed.rows.length > 0
+            (parsed.layout === 'SISREG_V1' || parsed.layout === 'REGULAMT_XLSX') &&
+            parsed.rows.length > 0
               ? 'READY_FOR_REVIEW'
               : 'REVIEW_REQUIRED',
         },

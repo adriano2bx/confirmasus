@@ -9,7 +9,7 @@ export function normalizePatientName(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Za-z\s]/g, ' ')
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toUpperCase();
@@ -55,4 +55,3 @@ export function normalizeBrazilianPhone(value: string): NormalizedPhone {
 export function selectWhatsAppPhone(phones: readonly NormalizedPhone[]): NormalizedPhone | null {
   return phones.find((phone) => phone.valid && phone.mobile) ?? null;
 }
-
