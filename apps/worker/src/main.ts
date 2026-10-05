@@ -189,21 +189,17 @@ async function enqueueDueConvocations(): Promise<void> {
   });
   for (const convocation of due) {
     if (!isSendableStage(convocation.stage)) continue;
-    await messageQueue.add(
-      'send-message',
-      { convocationId: convocation.id, stage: convocation.stage },
-      {
-        jobId: `send:${convocation.id}:${convocation.stage}`,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5_000 },
-        removeOnComplete: 1_000,
-        removeOnFail: 1_000,
+    const claimed = await prisma.convocation.updateMany({
+      where: {
+        id: convocation.id,
+        stage: convocation.stage,
+        status: 'SCHEDULED',
+        campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
       },
-    );
-    await prisma.convocation.updateMany({
-      where: { id: convocation.id, status: 'SCHEDULED' },
       data: { status: 'QUEUED' },
     });
+    if (!claimed.count) continue;
+    await enqueueMessageJob(convocation.id, convocation.stage);
   }
 }
 
@@ -214,21 +210,62 @@ async function reconcileFailedMessageJobs(now: Date): Promise<void> {
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
-    select: { id: true, stage: true },
+    select: {
+      id: true,
+      stage: true,
+      messages: {
+        where: { attemptNumber: { lte: 3 } },
+        select: { stage: true, attemptNumber: true },
+      },
+    },
     orderBy: { nextActionAt: 'asc' },
     take: 250,
   });
 
   for (const convocation of queued) {
     if (!isSendableStage(convocation.stage)) continue;
-    const job = await messageQueue.getJob(`send:${convocation.id}:${convocation.stage}`);
-    if (!job || (await job.getState()) !== 'failed') continue;
-    if (job.attemptsMade < (job.opts.attempts ?? 1)) continue;
-    await markMessageJobFailed(
-      { convocationId: convocation.id, stage: convocation.stage },
-      job.failedReason || 'O job de envio falhou após esgotar as tentativas.',
+    const attemptNumber =
+      convocation.stage === 'FIRST' ? 1 : convocation.stage === 'SECOND' ? 2 : 3;
+    const messageExists = convocation.messages.some(
+      (message) => message.stage === convocation.stage && message.attemptNumber === attemptNumber,
     );
+    const job = await messageQueue.getJob(`send:${convocation.id}:${convocation.stage}`);
+    const state = job ? await job.getState() : null;
+
+    if (state === 'failed' && job) {
+      if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        await markMessageJobFailed(
+          { convocationId: convocation.id, stage: convocation.stage },
+          job.failedReason || 'O job de envio falhou após esgotar as tentativas.',
+        );
+      }
+      continue;
+    }
+
+    // A job can finish before the database status changes to QUEUED. Such a
+    // job creates no message row; remove it and enqueue a fresh attempt.
+    if ((!job || state === 'completed') && !messageExists) {
+      if (job) await job.remove();
+      await enqueueMessageJob(convocation.id, convocation.stage);
+    }
   }
+}
+
+async function enqueueMessageJob(
+  convocationId: string,
+  stage: SendMessageJob['stage'],
+): Promise<void> {
+  await messageQueue.add(
+    'send-message',
+    { convocationId, stage },
+    {
+      jobId: `send:${convocationId}:${stage}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: 1_000,
+      removeOnFail: 1_000,
+    },
+  );
 }
 
 /** Repairs records created by older workers that advanced the visible stage
