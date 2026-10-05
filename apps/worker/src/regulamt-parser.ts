@@ -38,6 +38,7 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
   const itemColumn = column('Item', 'Procedimento');
   const appointmentColumn = column('Data agendamento', 'Data do agendamento');
   const idColumn = column('ID', 'Código');
+  const cpfColumn = column('CPF');
   // Suporte a Telefone/Celular/WhatsApp/Fone/Contato (ex.: "Telefone", "Celular", "WhatsApp", "Telefone 1", "Fone")
   const phoneColumns = [...headers.entries()]
     .filter(([name]) =>
@@ -57,6 +58,14 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
     if (!nome && !item) { ignored += 1; continue; }
     const dataHora = appointmentColumn ? formatDate(row.getCell(appointmentColumn).value) : null;
     const codigo = idColumn ? String(row.getCell(idColumn).value ?? '').trim() || null : null;
+    const cpfValue = cpfColumn ? row.getCell(cpfColumn).value : null;
+    const cpfText = cpfValue == null ? '' : String(cpfValue).trim();
+    // Excel may store CPF cells as numbers, which drops leading zeroes.
+    const cpf = cpfText
+      ? typeof cpfValue === 'number' && Number.isInteger(cpfValue) && cpfText.length < 11
+        ? cpfText.padStart(11, '0')
+        : cpfText
+      : null;
     const telefones = phoneColumns.length
       ? [
           ...new Set(
@@ -84,7 +93,7 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
     if (!item) issues.push('Procedimento ausente.');
     if (!dataHora) issues.push('Data/hora ausente.');
     const values = Array.isArray(row.values) ? row.values.slice(1) : [];
-    rows.push({ rowNumber, rawText: values.map((value: unknown) => String(value ?? '')).join(' | '), codigoConvocacaoOrigem: codigo, nome, dataNascimento: null, cpf: null, cns: null, telefones, dataHora, procedimentos: item ? [item] : [], issues });
+    rows.push({ rowNumber, rawText: values.map((value: unknown) => String(value ?? '')).join(' | '), codigoConvocacaoOrigem: codigo, nome, dataNascimento: null, cpf, cns: null, telefones, dataHora, procedimentos: item ? [item] : [], issues });
   }
   const phoneHint = phoneColumns.length
     ? 'Telefone extraído das colunas Telefone/Celular/WhatsApp/Fone quando presentes.'
