@@ -18,8 +18,6 @@ export default function DetailPage() {
   const [manualStatus, setManualStatus] = useState<'CONFIRMED' | 'CANCELLED' | null>(null);
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
-  const [phoneModal, setPhoneModal] = useState(false);
-  const [selectedPhoneId, setSelectedPhoneId] = useState('');
   const load = async () => {
     const response = await authFetch(`${API}/convocations/${id}`);
     if (!response.ok) throw new Error();
@@ -52,29 +50,6 @@ export default function DetailPage() {
       setReason('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível alterar a situação.');
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function savePhone() {
-    if (!selectedPhoneId) return;
-    setSaving(true);
-    setError('');
-    try {
-      const response = await authFetch(`${API}/convocations/${id}/phone`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ phoneId: selectedPhoneId }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? 'Não foi possível alterar o telefone.');
-      }
-      await load();
-      setPhoneModal(false);
-      setMessage('Telefone da convocação atualizado.');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível alterar o telefone.');
     } finally {
       setSaving(false);
     }
@@ -283,20 +258,6 @@ export default function DetailPage() {
                 <h2>Informações do paciente</h2>
                 <span className="muted">Dados pessoais e contato utilizado nesta convocação</span>
               </div>
-              <button
-                className="button secondary small"
-                disabled={isTerminal(item.status)}
-                onClick={() => {
-                  setSelectedPhoneId(
-                    item.selectedPhone?.id ??
-                      item.patient.phones.find((phone: any) => phone.selectedForWhatsApp)?.id ??
-                      '',
-                  );
-                  setPhoneModal(true);
-                }}
-              >
-                Alterar telefone
-              </button>
             </header>
             <div className="patient-details">
               <Detail
@@ -312,26 +273,19 @@ export default function DetailPage() {
               <div className="contact-details">
                 <small className="stat-label">Telefones</small>
                 <div className="phone-list">
-                  {item.patient.phones.map((phone: any, index: number) => (
-                    <div className="phone-item" key={phone.id ?? phone.normalizedValue}>
+                  {item.selectedPhone ? (
+                    <div className="phone-item" key={item.selectedPhone.id}>
                       <span className="phone-icon">
                         <Icon name="message" />
                       </span>
                       <span>
-                        <strong>{formatPhone(phone.normalizedValue)}</strong>
-                        <small>
-                          {item.selectedPhone?.id === phone.id ||
-                          (!item.selectedPhone && phone.selectedForWhatsApp)
-                            ? 'Número selecionado para WhatsApp'
-                            : `Telefone alternativo ${index + 1}`}
-                          {!phone.valid ? ' · número inválido' : ''}
-                        </small>
+                        <strong>{formatPhone(item.selectedPhone.normalizedValue)}</strong>
+                        <small>Número de WhatsApp do paciente</small>
                       </span>
                     </div>
-                  ))}
-                  {!item.patient.phones.length ? (
+                  ) : (
                     <p className="muted">Nenhum telefone cadastrado.</p>
-                  ) : null}
+                  )}
                 </div>
               </div>
             </div>
@@ -576,63 +530,6 @@ export default function DetailPage() {
                   : manualStatus === 'CONFIRMED'
                     ? 'Confirmar paciente'
                     : 'Cancelar convocação'}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-      {phoneModal ? (
-        <div className="modal-backdrop" onMouseDown={() => !saving && setPhoneModal(false)}>
-          <section
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="phone-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header className="modal-header">
-              <span className="page-eyebrow">Contato da convocação</span>
-              <h2 id="phone-title">Selecionar WhatsApp</h2>
-            </header>
-            <div className="modal-body">
-              <p className="muted">
-                A alteração vale para os próximos disparos desta convocação e fica registrada na
-                auditoria.
-              </p>
-              <div className="phone-options">
-                {item.patient.phones
-                  .filter((phone: any) => phone.valid && phone.mobile)
-                  .map((phone: any) => (
-                    <label key={phone.id}>
-                      <input
-                        type="radio"
-                        name="selected-phone"
-                        value={phone.id}
-                        checked={selectedPhoneId === phone.id}
-                        onChange={() => setSelectedPhoneId(phone.id)}
-                      />
-                      <span>
-                        <strong>{formatPhone(phone.normalizedValue)}</strong>
-                        <small>{phone.originalValue}</small>
-                      </span>
-                    </label>
-                  ))}
-              </div>
-            </div>
-            <footer className="modal-actions">
-              <button
-                className="button secondary"
-                disabled={saving}
-                onClick={() => setPhoneModal(false)}
-              >
-                Voltar
-              </button>
-              <button
-                className="button"
-                disabled={saving || !selectedPhoneId}
-                onClick={() => void savePhone()}
-              >
-                {saving ? 'Salvando…' : 'Usar este número'}
               </button>
             </footer>
           </section>

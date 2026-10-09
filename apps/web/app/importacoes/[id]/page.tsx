@@ -91,6 +91,7 @@ export default function ImportReviewPage() {
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ImportRow | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [showApproval, setShowApproval] = useState(false);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [campaignStatus, setCampaignStatus] = useState<string | null>(null);
@@ -173,6 +174,7 @@ export default function ImportReviewPage() {
     if (!editing) return;
     setLoading(true);
     const data = new FormData(event.currentTarget);
+    const whatsApp = String(data.get('selectedPhone') ?? '').trim();
     try {
       await request(`/imports/${params.id}/rows/${editing.id}`, {
         method: 'PATCH',
@@ -180,14 +182,11 @@ export default function ImportReviewPage() {
         body: JSON.stringify({
           codigoConvocacaoOrigem: data.get('codigoConvocacaoOrigem'),
           nome: data.get('nome'),
-          dataNascimento: data.get('dataNascimento'),
+          dataNascimento: String(data.get('dataNascimento') ?? '').trim() || null,
           cpf: data.get('cpf'),
           cns: data.get('cns'),
-          telefones: String(data.get('telefones') ?? '')
-            .split(/\n|,/)
-            .map((v) => v.trim())
-            .filter(Boolean),
-          selectedPhone: data.get('selectedPhone'),
+          telefones: [whatsApp],
+          selectedPhone: whatsApp,
           dataHora: data.get('dataHora'),
           procedimentos: String(data.get('procedimentos') ?? '')
             .split('\n')
@@ -195,14 +194,12 @@ export default function ImportReviewPage() {
             .filter(Boolean),
         }),
       });
+      setEditError(null);
       setEditing(null);
       await load(true);
       setNotice({ tone: 'success', text: 'Registro atualizado e validado novamente.' });
     } catch (error) {
-      setNotice({
-        tone: 'error',
-        text: error instanceof Error ? error.message : 'Não foi possível salvar',
-      });
+      setEditError(error instanceof Error ? error.message : 'Não foi possível salvar');
     } finally {
       setLoading(false);
     }
@@ -363,7 +360,10 @@ export default function ImportReviewPage() {
             setPage(1);
           }}
           onPage={setPage}
-          onEdit={setEditing}
+          onEdit={(row) => {
+            setEditError(null);
+            setEditing(row);
+          }}
           onContinue={() => setPhase('patients')}
         />
       ) : !approved ? (
@@ -382,7 +382,11 @@ export default function ImportReviewPage() {
         <EditRowModal
           row={editing}
           loading={loading}
-          onClose={() => setEditing(null)}
+          error={editError}
+          onClose={() => {
+            setEditError(null);
+            setEditing(null);
+          }}
           onSubmit={saveRow}
         />
       ) : null}
@@ -602,7 +606,6 @@ function PatientsReview({
               <div>
                 <span className="stat-label">WhatsApp selecionado</span>
                 <strong>{group.selectedPhone || 'Nenhum número válido'}</strong>
-                <small>{group.phones.length} telefone(s) preservado(s)</small>
               </div>
               <div>
                 <span className="stat-label">Procedimentos</span>
@@ -623,15 +626,18 @@ function PatientsReview({
 function EditRowModal({
   row,
   loading,
+  error,
   onClose,
   onSubmit,
 }: {
   row: ImportRow;
   loading: boolean;
+  error: string | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const data = row.data ?? {};
+  const whatsApp = data.selectedPhone?.trim() || data.telefones?.find((phone) => phone.trim()) || '';
   return (
     <div
       className="modal-backdrop"
@@ -657,6 +663,11 @@ function EditRowModal({
           </button>
         </header>
         <div className="panel-body form-grid">
+          {error ? (
+            <div className="wide">
+              <Feedback tone="error">{error}</Feedback>
+            </div>
+          ) : null}
           <Field label="Nome completo" name="nome" defaultValue={data.nome ?? ''} required wide />
           <Field
             label="Data de nascimento (opcional)"
@@ -679,21 +690,14 @@ function EditRowModal({
             placeholder="DD/MM/AAAA HH:mm"
             required
           />
-          <label className="field wide">
-            <span>
-              Telefones <small>(um por linha)</small>
-            </span>
-            <textarea
-              name="telefones"
-              defaultValue={(data.telefones ?? []).join('\n')}
-              rows={3}
-              required
-            />
-          </label>
           <Field
-            label="WhatsApp selecionado"
+            label="WhatsApp"
             name="selectedPhone"
-            defaultValue={data.selectedPhone ?? data.telefones?.[0] ?? ''}
+            defaultValue={whatsApp}
+            type="tel"
+            autoComplete="tel"
+            required
+            wide
           />
           <label className="field wide">
             <span>

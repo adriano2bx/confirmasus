@@ -268,7 +268,7 @@ model Convocation {
   responses       MessageResponse[]
   handoff         HandoffEvent?
 
-  @@unique([campaignId, patientId])
+  @@unique([campaignId, patientId, selectedPhoneId])
   @@index([status, nextActionAt])
   @@index([campaignId, stage, status])
   @@index([selectedPhoneId])

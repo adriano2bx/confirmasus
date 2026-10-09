@@ -151,7 +151,7 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   const row = readImportedRow(value);
   const birthDate = parseBrazilianDate(row.dataNascimento);
   const scheduledAt = parseBrazilianDateTime(row.dataHora);
-  const phones = row.telefones.map(normalizeBrazilianPhone);
+  const suppliedPhones = row.telefones.map(normalizeBrazilianPhone);
   const selectedPhone = row.selectedPhone ? normalizeBrazilianPhone(row.selectedPhone) : null;
   const normalizedCpf = row.cpf?.replace(/\D/g, '') || null;
   const normalizedCns = row.cns?.replace(/\D/g, '') || null;
@@ -161,12 +161,13 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   if (!row.nome || normalizePatientName(row.nome).length < 3)
     issues.push('Nome inválido ou ausente.');
   if (row.dataNascimento && !birthDate) issues.push('Data de nascimento inválida.');
-  if (!selectWhatsAppPhone(phones)) issues.push('Nenhum telefone celular válido para WhatsApp.');
+  if (!selectWhatsAppPhone(suppliedPhones))
+    issues.push('Nenhum telefone celular válido para WhatsApp.');
   if (selectedPhone && (!selectedPhone.valid || !selectedPhone.mobile)) {
     issues.push('O telefone selecionado para WhatsApp não é um celular válido.');
   } else if (
     selectedPhone &&
-    !phones.some((phone) => phone.normalized === selectedPhone.normalized)
+    !suppliedPhones.some((phone) => phone.normalized === selectedPhone.normalized)
   ) {
     issues.push('O telefone selecionado para WhatsApp não está na lista de telefones.');
   }
@@ -175,14 +176,23 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   if (normalizedCpf && normalizedCpf.length !== 11) issues.push('CPF inválido.');
   if (normalizedCns && normalizedCns.length !== 15) issues.push('CNS inválido.');
 
+  const chosenPhone =
+    selectedPhone?.valid &&
+    selectedPhone.mobile &&
+    suppliedPhones.some((phone) => phone.normalized === selectedPhone.normalized)
+      ? selectedPhone
+      : selectWhatsAppPhone(suppliedPhones);
+
   return {
     ...row,
+    telefones: chosenPhone ? [chosenPhone.normalized] : [],
+    selectedPhone: chosenPhone?.normalized ?? null,
     normalizedName: row.nome ? normalizePatientName(row.nome) : null,
     birthDate,
     scheduledAt,
     normalizedCpf: normalizedCpf?.length === 11 ? normalizedCpf : null,
     normalizedCns: normalizedCns?.length === 15 ? normalizedCns : null,
-    phones,
+    phones: chosenPhone ? [chosenPhone] : [],
     issues,
   };
 }
