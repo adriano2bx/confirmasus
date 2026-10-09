@@ -1,4 +1,4 @@
-import { Prisma, prisma, type MessageStatus } from '@confirma/database';
+import { Prisma, prisma, type ConvocationStatus, type MessageStatus } from '@confirma/database';
 import type { Job } from 'bullmq';
 import type { ProcessWebhookJob } from '@confirma/queue';
 import {
@@ -18,7 +18,12 @@ import {
   automaticReplyEnabled,
 } from './automatic-reply.js';
 
-const TERMINAL_CONVOCATION_STATUSES = ['CONFIRMED', 'CANCELLED', 'FINISHED_NO_RESPONSE'];
+const TERMINAL_CONVOCATION_STATUSES: ConvocationStatus[] = [
+  'CONFIRMED',
+  'CANCELLED',
+  'FINISHED_NO_RESPONSE',
+  'SEND_ERROR',
+];
 
 export async function processWebhook(job: Job<ProcessWebhookJob>): Promise<void> {
   const event = await prisma.messageEvent.findUniqueOrThrow({
@@ -139,6 +144,29 @@ async function processMessageEvent(
           : {}),
       },
     });
+    if (update.status === 'FAILED' && status === 'FAILED') {
+      const stopped = await transaction.convocation.updateMany({
+        where: {
+          id: message.convocationId,
+          status: { notIn: TERMINAL_CONVOCATION_STATUSES },
+        },
+        data: { status: 'SEND_ERROR', nextActionAt: null },
+      });
+      if (stopped.count > 0) {
+        await transaction.auditLog.create({
+          data: {
+            eventType: 'CONVOCATION_SEND_FAILED',
+            entityType: 'convocation',
+            entityId: message.convocationId,
+            metadata: {
+              messageId: message.id,
+              failureCode: update.failureCode,
+              failureReason: update.failureReason,
+            },
+          },
+        });
+      }
+    }
     await completeEvent(transaction, eventId, message.id);
   });
 }

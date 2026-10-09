@@ -176,6 +176,64 @@ try {
   } while (confirmed.status !== 'CONFIRMED' && Date.now() < confirmationDeadline);
   assert.equal(confirmed.status, 'CONFIRMED');
   assert.equal(confirmed.responses?.[0]?.action, 'CONFIRM');
+
+  const failedRecipient = convocations.items.find(
+    (item) => item.selectedPhone?.normalizedValue === '5565988888888',
+  );
+  const failedMessageId = failedRecipient?.messages?.[0]?.providerMessageId;
+  assert(failedRecipient && failedMessageId, 'A segunda mensagem simulada deve existir.');
+  const failedWebhookBody = {
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              statuses: [
+                {
+                  id: failedMessageId,
+                  status: 'failed',
+                  timestamp: String(Math.floor(Date.now() / 1_000)),
+                  recipient_id: '5565988888888',
+                  errors: [
+                    {
+                      code: 131026,
+                      title: 'Message undeliverable',
+                      error_data: { details: 'Recipient could not be reached.' },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const failedRawBody = JSON.stringify(failedWebhookBody);
+  const failedSignature = `sha256=${createHmac('sha256', appSecret)
+    .update(failedRawBody)
+    .digest('hex')}`;
+  await request('/webhooks/meta', {
+    method: 'POST',
+    body: failedWebhookBody,
+    headers: { 'x-hub-signature-256': failedSignature },
+  });
+  const failureDeadline = Date.now() + 15_000;
+  let failedDetail;
+  do {
+    await wait(250);
+    failedDetail = await request(`/convocations/${failedRecipient.id}`);
+  } while (failedDetail.status !== 'SEND_ERROR' && Date.now() < failureDeadline);
+  assert.equal(failedDetail.status, 'SEND_ERROR');
+  assert.equal(failedDetail.nextActionAt, null);
+  assert(
+    failedDetail.messages.some(
+      (message) => message.status === 'FAILED' && message.failureCode === '131026',
+    ),
+    'O código de falha da Meta deve ficar registrado na mensagem.',
+  );
   console.log(
     JSON.stringify({
       result: 'PASS',
