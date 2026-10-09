@@ -16,20 +16,14 @@ export function normalizePatientName(value: string): string {
 }
 
 export function patientGroupingKey(input: {
-  name: string;
-  birthDate?: string | null;
-  cpf?: string | null;
+  phones: readonly string[];
+  selectedPhone?: string | null;
 }): string {
-  const cpf = input.cpf?.replace(/\D/g, '');
-  if (cpf?.length === 11) {
-    return `CPF:${cpf}`;
-  }
-
-  if (input.birthDate) {
-    return `NAME_DOB:${normalizePatientName(input.name)}:${input.birthDate}`;
-  }
-
-  return `NAME:${normalizePatientName(input.name)}`;
+  const requested = input.selectedPhone ? normalizeBrazilianPhone(input.selectedPhone) : null;
+  const selected =
+    (requested?.valid && requested.mobile ? requested : null) ??
+    selectWhatsAppPhone(input.phones.map(normalizeBrazilianPhone));
+  return selected ? `WHATSAPP:${selected.normalized}` : '';
 }
 
 export function normalizeBrazilianPhone(value: string): NormalizedPhone {

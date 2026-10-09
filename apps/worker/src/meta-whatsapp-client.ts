@@ -2,8 +2,10 @@ import type { MessageStage } from '@confirma/domain';
 
 interface MetaSuccessResponse {
   messages?: Array<{ id?: string }>;
-  error?: { message?: string; code?: number; error_subcode?: number };
+  error?: { message?: string; code?: number; error_subcode?: number; is_transient?: boolean };
 }
+
+const RETRYABLE_META_ERROR_CODES = new Set([130429, 131048, 131056]);
 
 export class WhatsAppApiError extends Error {
   constructor(
@@ -95,7 +97,10 @@ async function send(payload: Record<string, unknown>): Promise<{ providerMessage
     throw new WhatsAppApiError(
       body.error?.message?.slice(0, 300) ?? 'A API da Meta recusou o envio.',
       code,
-      response.status >= 500 || response.status === 429,
+      response.status >= 500 ||
+        response.status === 429 ||
+        body.error?.is_transient === true ||
+        (body.error?.code !== undefined && RETRYABLE_META_ERROR_CODES.has(body.error.code)),
     );
   }
   const providerMessageId = body.messages?.[0]?.id;

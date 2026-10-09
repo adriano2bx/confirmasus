@@ -69,12 +69,30 @@ export class WebhooksService {
       }
     }
     if (!stored) throw new Error('Não foi possível persistir o evento do webhook');
+
+    if (stored.processingStatus === 'FAILED') {
+      const reset = await prisma.messageEvent.updateMany({
+        where: { id: stored.id, processingStatus: 'FAILED' },
+        data: { processingStatus: 'PENDING', processingError: null, processedAt: null },
+      });
+      if (reset.count) {
+        stored = await prisma.messageEvent.findUnique({ where: { id: stored.id } });
+      }
+    }
+    if (!stored) throw new Error('Não foi possível recuperar o evento do webhook');
+
     if (stored.processingStatus === 'PENDING') {
+      const jobId = `webhook:${stored.id}`;
+      const existingJob = await this.queue.getJob(jobId);
+      if (existingJob) {
+        const state = await existingJob.getState();
+        if (state === 'failed' || state === 'completed') await existingJob.remove();
+      }
       await this.queue.add(
         'process-webhook',
         { messageEventId: stored.id },
         {
-          jobId: `webhook:${stored.id}`,
+          jobId,
           attempts: 5,
           backoff: { type: 'exponential', delay: 2_000 },
           removeOnComplete: 1_000,

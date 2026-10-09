@@ -96,6 +96,28 @@ describe('WhatsApp Cloud API', () => {
         !error.retryable,
     );
   });
+
+  it('repete limite transitório da Meta retornado como HTTP 400 e não repete erro de template', async () => {
+    configure();
+    globalThis.fetch = async () =>
+      Response.json({ error: { code: 130429, message: 'Rate limit hit' } }, { status: 400 });
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError && error.code === '130429' && error.retryable,
+    );
+
+    globalThis.fetch = async () =>
+      Response.json(
+        { error: { code: 132000, message: 'Parameter count mismatch' } },
+        { status: 400 },
+      );
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError && error.code === '132000' && !error.retryable,
+    );
+  });
 });
 
 function configure() {

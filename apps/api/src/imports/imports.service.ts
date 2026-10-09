@@ -18,11 +18,16 @@ export class ImportsService {
   constructor(@Inject(IMPORT_QUEUE) private readonly queue: Queue<ParseImportJob>) {}
 
   async create(file: Express.Multer.File, userId: string) {
-    const isPdf = file.mimetype === 'application/pdf' && file.buffer.subarray(0, 5).equals(Buffer.from('%PDF-'));
+    const isPdf =
+      file.mimetype === 'application/pdf' &&
+      file.buffer.subarray(0, 5).equals(Buffer.from('%PDF-'));
     const isXlsx =
-      (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || file.mimetype === 'application/zip' || file.originalname.toLowerCase().endsWith('.xlsx')) &&
+      (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        file.mimetype === 'application/zip' ||
+        file.originalname.toLowerCase().endsWith('.xlsx')) &&
       file.buffer.subarray(0, 2).equals(Buffer.from('PK'));
-    if (!isPdf && !isXlsx) throw new BadRequestException('Envie um arquivo PDF ou uma planilha XLSX válida');
+    if (!isPdf && !isXlsx)
+      throw new BadRequestException('Envie um arquivo PDF ou uma planilha XLSX válida');
 
     const temporaryDirectory = environment().UPLOAD_TEMP_DIR;
     await mkdir(temporaryDirectory, { recursive: true });
@@ -134,6 +139,13 @@ export class ImportsService {
       data: row.normalizedData,
     }));
     const validatedRows = rows.map((row) => ({ ...row, validated: validateImportedRow(row.data) }));
+    for (const row of validatedRows) {
+      row.data = {
+        ...(row.data as Record<string, unknown>),
+        telefones: row.validated.telefones,
+        selectedPhone: row.validated.selectedPhone,
+      };
+    }
     const validRows = rows.filter((row) => row.validationStatus === 'VALID').length;
     const warningRows = rows.filter((row) => row.validationStatus === 'WARNING').length;
     const invalidRows = rows.filter((row) => row.validationStatus === 'INVALID').length;
@@ -142,13 +154,14 @@ export class ImportsService {
       const value = row.validated;
       if (!value.normalizedName) continue;
       const key = patientGroupingKey({
-        name: value.nome ?? '',
-        birthDate: value.birthDate ? value.birthDate.toISOString().slice(0, 10) : null,
-        cpf: value.normalizedCpf,
+        phones: value.telefones,
+        selectedPhone: value.selectedPhone,
       });
-      const group = grouped.get(key) ?? [];
+      // Rows without a usable WhatsApp number cannot be merged safely.
+      const groupingKey = key || `ROW:${row.id}`;
+      const group = grouped.get(groupingKey) ?? [];
       group.push(row);
-      grouped.set(key, group);
+      grouped.set(groupingKey, group);
     }
     const patientGroups = [...grouped.entries()].map(([key, group]) => {
       const first = group[0]!.validated;
@@ -360,6 +373,11 @@ export class ImportsService {
           data: {
             validationStatus: validated.issues.length === 0 ? 'VALID' : 'INVALID',
             validationIssues: validated.issues,
+            normalizedData: {
+              ...(row.normalizedData as Record<string, unknown>),
+              telefones: validated.telefones,
+              selectedPhone: validated.selectedPhone,
+            },
           },
         });
       }
