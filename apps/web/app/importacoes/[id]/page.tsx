@@ -684,11 +684,10 @@ function EditRowModal({
             required
           />
           <Field
-            label="Data e hora do procedimento"
+            label="Data e hora do procedimento (opcional)"
             name="dataHora"
             defaultValue={data.dataHora ?? ''}
             placeholder="DD/MM/AAAA HH:mm"
-            required
           />
           <Field
             label="WhatsApp"
@@ -701,13 +700,12 @@ function EditRowModal({
           />
           <label className="field wide">
             <span>
-              Procedimentos <small>(um por linha)</small>
+              Procedimentos <small>(opcional, um por linha)</small>
             </span>
             <textarea
               name="procedimentos"
               defaultValue={(data.procedimentos ?? []).join('\n')}
               rows={4}
-              required
             />
           </label>
         </div>

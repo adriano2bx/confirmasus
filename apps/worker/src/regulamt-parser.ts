@@ -111,14 +111,14 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
       ['telefone', 'celular', 'whatsapp', 'fone', 'contato'].some((key) => name.includes(key)),
     )
     .map(([, col]) => col);
-  if (!patientColumn || !itemColumn) {
+  if (!patientColumn) {
     return {
       layout: 'REGULAMT_XLSX',
       pageCount: 1,
       reportedPageCount: 0,
       totalReported: 0,
       rows: [],
-      warnings: ['Cabeçalho incompatível: esperado ao menos Paciente e Item.'],
+      warnings: ['Cabeçalho incompatível: esperado ao menos a coluna Paciente.'],
     };
   }
 
@@ -126,12 +126,13 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
   let ignored = 0;
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
-    const nome = String(row.getCell(patientColumn).value ?? '').trim() || null;
-    const item = String(row.getCell(itemColumn).value ?? '').trim() || null;
-    if (!nome && !item) {
+    const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+    if (values.every((value: unknown) => value == null || String(value).trim() === '')) {
       ignored += 1;
       continue;
     }
+    const nome = String(row.getCell(patientColumn).value ?? '').trim() || null;
+    const item = itemColumn ? String(row.getCell(itemColumn).value ?? '').trim() || null : null;
     const dataHora = appointmentColumn ? formatDate(row.getCell(appointmentColumn).value) : null;
     const birthDateValue = birthDateColumn ? row.getCell(birthDateColumn).value : null;
     const dataNascimento = birthDateColumn ? formatBirthDate(birthDateValue) : null;
@@ -168,15 +169,11 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
         ]
       : [];
     const issues: string[] = [];
+    if (!codigo) issues.push('Código da convocação ausente.');
     if (cpf && cpf.replace(/\D/g, '').length !== 11) issues.push('CPF inválido.');
     if (cns && cns.length !== 15) issues.push('CNS inválido.');
-    if (birthDateValue != null && String(birthDateValue).trim() && !dataNascimento)
-      issues.push('Data de nascimento inválida.');
     if (telefones.length === 0) issues.push('Telefone ausente.');
     if (!nome) issues.unshift('Nome não identificado.');
-    if (!item) issues.push('Procedimento ausente.');
-    if (!dataHora) issues.push('Data/hora ausente.');
-    const values = Array.isArray(row.values) ? row.values.slice(1) : [];
     rows.push({
       rowNumber,
       rawText: values.map((value: unknown) => String(value ?? '')).join(' | '),
@@ -199,7 +196,7 @@ export async function parseRegulamtXlsx(data: Uint8Array): Promise<SisregParseRe
   if (!cnsColumn) unavailableFields.push('CNS');
   if (!birthDateColumn) unavailableFields.push('nascimento');
   const warnings = [
-    `Planilha REGULAMT: ${unavailableFields.length ? `campos não encontrados na origem: ${unavailableFields.join(', ')}; ` : ''}${phoneHint} Nascimento é opcional para aprovação. Complete os registros na revisão antes de aprovar se desejar.`,
+    `Planilha REGULAMT: ${unavailableFields.length ? `campos não encontrados na origem: ${unavailableFields.join(', ')}; ` : ''}${phoneHint} Somente nome, telefone válido e ID são obrigatórios; datas e procedimento são opcionais.`,
   ];
   if (ignored) warnings.push(`${ignored} linha(s) vazia(s) foram ignoradas.`);
   return {

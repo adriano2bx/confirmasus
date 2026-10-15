@@ -32,6 +32,8 @@ Monorepo do MVP de automação das convocações SUS por WhatsApp.
 
 Campanhas podem ser programadas e executadas por scheduler. O envio começa em `DRY_RUN`; somente o worker com `MESSAGING_MODE=LIVE` e credenciais da WhatsApp Cloud API configuradas realiza disparos reais. O webhook da Meta está disponível em `/api/webhooks/meta`.
 
+Na importação, somente nome, telefone celular válido para WhatsApp e ID da convocação são obrigatórios. Datas (incluindo nascimento e agendamento) e procedimento podem ficar ausentes; o horário dos disparos é definido na programação da campanha.
+
 O PDF é temporário: o arquivo só deverá ser removido depois que seus dados forem
 persistidos. O PostgreSQL é a fonte de verdade dos agendamentos; Redis/BullMQ serve
 somente para execução assíncrona.

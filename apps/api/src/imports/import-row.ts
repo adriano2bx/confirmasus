@@ -160,7 +160,6 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   if (!row.codigoConvocacaoOrigem) issues.push('Código da convocação ausente.');
   if (!row.nome || normalizePatientName(row.nome).length < 3)
     issues.push('Nome inválido ou ausente.');
-  if (row.dataNascimento && !birthDate) issues.push('Data de nascimento inválida.');
   if (!selectWhatsAppPhone(suppliedPhones))
     issues.push('Nenhum telefone celular válido para WhatsApp.');
   if (selectedPhone && (!selectedPhone.valid || !selectedPhone.mobile)) {
@@ -171,8 +170,6 @@ export function validateImportedRow(value: unknown): ValidatedImportRow {
   ) {
     issues.push('O telefone selecionado para WhatsApp não está na lista de telefones.');
   }
-  if (!scheduledAt) issues.push('Data/hora inválida ou ausente.');
-  if (row.procedimentos.length === 0) issues.push('Procedimento ausente.');
   if (normalizedCpf && normalizedCpf.length !== 11) issues.push('CPF inválido.');
   if (normalizedCns && normalizedCns.length !== 15) issues.push('CNS inválido.');
 

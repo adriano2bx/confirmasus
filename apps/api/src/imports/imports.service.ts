@@ -388,7 +388,7 @@ export class ImportsService {
               importId: imported.id,
               importRowId: row.id,
               codigoConvocacaoOrigem: validated.codigoConvocacaoOrigem!,
-              scheduledAt: validated.scheduledAt!,
+              scheduledAt: validated.scheduledAt,
               procedures: { create: validated.procedimentos.map((name) => ({ name })) },
             },
           });
