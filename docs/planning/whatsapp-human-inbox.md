@@ -154,7 +154,7 @@ Testes necessários: unitários de máquina de estado/janela/idempotência; inte
 10. **API e interface inbox** — depende 5/6/7/8; cursor, autorização, estados concorrentes e UX acessível.
 11. **SSE, cursor de retomada e notificações** — depende 4/10; reconexão não perde evento nem expõe conteúdo.
 12. **Mídia privada e validação** — depende 1/3/4; storage, malware/limites, expiração e autorização.
-13. **Métricas, alertas, runbooks e resiliência** — acompanha 4/8/11/12; age de fila/Meta/DB/Redis observável e procedimento de recuperação.
+13. **Métricas, alertas, runbooks e resiliência** — acompanha 4/8/11/12; idade de fila/Meta/DB/Redis observável e procedimento de recuperação.
 14. **Carga, segurança, migração e piloto** — depende de todas as anteriores; metas de 5k/10k e critérios da seção 6 aprovados em VPS; aceite de governança antes de dados reais.
 
 Critério global de liberação: migrations testadas em cópia; nenhuma mensagem/note perdida ou duplicada; aceite de janela/permissões; campanhas preservadas; carga/recuperação demonstradas; alertas, backup/restore e responsável de operação definidos.
