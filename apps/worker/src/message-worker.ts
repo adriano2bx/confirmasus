@@ -1,17 +1,56 @@
 import { randomUUID } from 'node:crypto';
-import { ConvocationStage, prisma } from '@confirma/database';
+import { ConvocationStage, prisma, type PrismaClient } from '@confirma/database';
 import { templateForStage, type MessageStage } from '@confirma/domain';
-import { QUEUES, type SendMessageJob } from '@confirma/queue';
+import { QUEUES, type SendMessageJob, type SendPermit } from '@confirma/queue';
 import type { Job } from 'bullmq';
-import { WhatsAppApiError, sendMetaTemplate } from './meta-whatsapp-client.js';
+import {
+  SendPermitDeniedError,
+  WhatsAppApiError,
+  acquireMetaSendPermit,
+  configuredPhoneNumberId,
+  deferJobForSendPermit,
+  sendMetaTemplate,
+} from './meta-whatsapp-client.js';
 import { nextResponseDeadline } from './follow-up-schedule.js';
 
 function stageToMessageStage(stage: ConvocationStage): MessageStage | null {
   return stage === 'FIRST' || stage === 'SECOND' || stage === 'THIRD' ? stage : null;
 }
 
-export async function processSendMessage(job: Job<SendMessageJob>): Promise<void> {
-  const created = await prisma.$transaction(async (transaction) => {
+export interface CampaignSenderDeps {
+  prisma: PrismaClient;
+  acquirePermit: (phoneNumberId: string, priority: 'human' | 'campaign') => Promise<SendPermit>;
+  sendTemplate: typeof sendMetaTemplate;
+  mode: () => string;
+  /** Token do job BullMQ: permite adiar por limite de envio sem consumir tentativa. */
+  token?: string;
+}
+
+function defaultDeps(): CampaignSenderDeps {
+  return {
+    prisma,
+    acquirePermit: acquireMetaSendPermit,
+    sendTemplate: sendMetaTemplate,
+    mode: () => process.env.MESSAGING_MODE ?? 'DRY_RUN',
+  };
+}
+
+/**
+ * Pausa por atendimento humano (ADR-24): convocação com `humanHoldAt` não envia.
+ * - Na transação de claim: volta QUEUED -> SCHEDULED sem criar linha de messages.
+ * - Imediatamente antes da Meta (job já enfileirado + atribuição concorrente): a linha
+ *   da etapa volta a QUEUED (sem providerMessageId; o upsert da etapa a reutiliza depois)
+ *   e a convocação volta a SCHEDULED. Nenhuma tentativa é consumida e nada é enviado;
+ *   ao retomar, o scheduler reenfileira (ver reconcileFailedMessageJobs em main.ts).
+ * Resta uma janela mínima entre a releitura e a chamada HTTP; sem hold, o fluxo é o anterior.
+ */
+export async function processSendMessage(
+  job: Job<SendMessageJob>,
+  overrides: Partial<CampaignSenderDeps> = {},
+): Promise<void> {
+  const deps: CampaignSenderDeps = { ...defaultDeps(), ...overrides };
+  const db = deps.prisma;
+  const created = await db.$transaction(async (transaction) => {
     const convocation = await transaction.convocation.findUnique({
       where: { id: job.data.convocationId },
       include: {
@@ -23,6 +62,13 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
     if (!convocation || !['SCHEDULED', 'RUNNING'].includes(convocation.campaign.status))
       return null;
     if (convocation.status !== 'QUEUED' || convocation.stage !== job.data.stage) return null;
+    if (convocation.humanHoldAt) {
+      await transaction.convocation.updateMany({
+        where: { id: convocation.id, version: convocation.version, status: 'QUEUED' },
+        data: { status: 'SCHEDULED', version: { increment: 1 } },
+      });
+      return null;
+    }
 
     const stage = stageToMessageStage(convocation.stage);
     const phone =
@@ -47,6 +93,7 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
     if (claimed.count === 0) return null;
 
     const template = templateForStage(stage);
+    const senderPhoneNumberId = configuredPhoneNumberId();
     const message = await transaction.message.upsert({
       where: {
         convocationId_stage_attemptNumber: {
@@ -59,6 +106,7 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
         status: 'PROCESSING',
         templateName: template.name,
         templateId: process.env[template.idEnvironmentVariable] ?? template.defaultId,
+        senderPhoneNumberId,
         failureCode: null,
         failureReason: null,
         failedAt: null,
@@ -70,6 +118,7 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
         templateName: template.name,
         templateId: process.env[template.idEnvironmentVariable] ?? template.defaultId,
         phone: phone.normalizedValue,
+        senderPhoneNumberId,
         status: 'PROCESSING',
         idempotencyKey: `convocation:${convocation.id}:${stage}`,
       },
@@ -78,19 +127,32 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
   });
 
   if (!created) return;
-  const mode = process.env.MESSAGING_MODE ?? 'DRY_RUN';
+  const mode = deps.mode();
   let providerMessageId: string;
   try {
-    if (mode === 'DRY_RUN') providerMessageId = `dry-run-${randomUUID()}`;
-    else if (mode === 'LIVE') {
-      const message = await prisma.message.findUniqueOrThrow({
+    if (mode === 'DRY_RUN') {
+      if (await releaseIfHumanHold(db, created)) return;
+      providerMessageId = `dry-run-${randomUUID()}`;
+    } else if (mode === 'LIVE') {
+      const message = await db.message.findUniqueOrThrow({
         where: { id: created.messageId },
         include: { convocation: { include: { patient: true } } },
       });
       const stage = stageToMessageStage(message.stage);
       if (!stage) throw new Error('Etapa de mensagem inválida');
+      const senderPhoneNumberId = configuredPhoneNumberId();
+      if (!senderPhoneNumberId) {
+        throw new WhatsAppApiError(
+          'Configuração obrigatória ausente: META_WHATSAPP_PHONE_NUMBER_ID.',
+          'CONFIGURATION_ERROR',
+          false,
+        );
+      }
+      const permit = await deps.acquirePermit(senderPhoneNumberId, 'campaign');
+      if (!permit.granted) throw new SendPermitDeniedError(permit.retryAfterMs);
+      if (await releaseIfHumanHold(db, created)) return;
       providerMessageId = (
-        await sendMetaTemplate({
+        await deps.sendTemplate({
           destination: message.phone,
           stage,
           templateName: message.templateId,
@@ -105,7 +167,7 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
       error instanceof WhatsAppApiError
         ? error
         : new WhatsAppApiError('Falha inesperada ao enviar.', 'UNKNOWN', true);
-    await prisma.$transaction(async (transaction) => {
+    await db.$transaction(async (transaction) => {
       await transaction.message.update({
         where: { id: created.messageId },
         data: {
@@ -122,11 +184,15 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
           : { status: 'SEND_ERROR', nextActionAt: null },
       });
     });
+    // Limite de envio: nada saiu; reprograma sem consumir tentativa quando há token.
+    if (providerError instanceof SendPermitDeniedError) {
+      await deferJobForSendPermit(job, deps.token, providerError.retryAfterMs);
+    }
     if (providerError.retryable) throw providerError;
     return;
   }
 
-  await prisma.$transaction(async (transaction) => {
+  await db.$transaction(async (transaction) => {
     const message = await transaction.message.findUniqueOrThrow({
       where: { id: created.messageId },
       include: { convocation: { include: { campaign: true } } },
@@ -158,4 +224,27 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
         : { status: 'WAITING_RESPONSE', nextActionAt: null },
     });
   });
+}
+
+/** Releitura da pausa humana imediatamente antes da Meta. true = não enviar. */
+async function releaseIfHumanHold(
+  db: PrismaClient,
+  created: { convocationId: string; messageId: string },
+): Promise<boolean> {
+  const current = await db.convocation.findUnique({
+    where: { id: created.convocationId },
+    select: { humanHoldAt: true },
+  });
+  if (!current?.humanHoldAt) return false;
+  await db.$transaction(async (transaction) => {
+    await transaction.message.updateMany({
+      where: { id: created.messageId, status: 'PROCESSING', providerMessageId: null },
+      data: { status: 'QUEUED' },
+    });
+    await transaction.convocation.updateMany({
+      where: { id: created.convocationId, status: 'PROCESSING' },
+      data: { status: 'SCHEDULED', version: { increment: 1 } },
+    });
+  });
+  return true;
 }

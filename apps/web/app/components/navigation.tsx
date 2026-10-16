@@ -15,6 +15,7 @@ const groups = [
       { label: 'Importações', href: '/importacoes', icon: 'upload' },
       { label: 'Campanhas', href: '/campanhas', icon: 'send' },
       { label: 'Convocações', href: '/convocacoes', icon: 'users' },
+      { label: 'Atendimento', href: '/atendimento', icon: 'message' },
     ],
   },
   { label: 'Análise', links: [{ label: 'Relatórios', href: '/relatorios', icon: 'report' }] },

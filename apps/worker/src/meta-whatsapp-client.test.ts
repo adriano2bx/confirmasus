@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { sendMetaTemplate, sendMetaText, WhatsAppApiError } from './meta-whatsapp-client.js';
+import {
+  isPreConnectFailure,
+  sendMetaTemplate,
+  sendMetaText,
+  WhatsAppApiError,
+} from './meta-whatsapp-client.js';
 
 const originalFetch = globalThis.fetch;
 const originalEnvironment = {
@@ -116,6 +121,98 @@ describe('WhatsApp Cloud API', () => {
       sendMetaText({ destination: '5511999999999', text: 'Oi' }),
       (error: unknown) =>
         error instanceof WhatsAppApiError && error.code === '132000' && !error.retryable,
+    );
+  });
+
+  it('envia biz_opaque_callback_data e usa o phone_number_id informado', async () => {
+    configure();
+    let request: { url: string; body: Record<string, unknown> } | undefined;
+    globalThis.fetch = async (url, init) => {
+      request = { url: String(url), body: JSON.parse(String(init?.body)) };
+      return Response.json({ messages: [{ id: 'wamid.human' }] });
+    };
+    await sendMetaText({
+      destination: '5511999999999',
+      text: 'Olá',
+      bizOpaqueCallbackData: 'conversation-message-id',
+      phoneNumberId: '999888',
+    });
+    assert.equal(request?.url, 'https://graph.facebook.com/v22.0/999888/messages');
+    assert.equal(request?.body.biz_opaque_callback_data, 'conversation-message-id');
+
+    await sendMetaText({ destination: '5511999999999', text: 'Olá' });
+    assert.equal(request?.url, 'https://graph.facebook.com/v22.0/123456/messages');
+    assert.equal('biz_opaque_callback_data' in (request?.body ?? {}), false);
+  });
+
+  it('falha antes de conectar é repetível e não ambígua', async () => {
+    configure();
+    globalThis.fetch = async () => {
+      throw new TypeError('fetch failed', {
+        cause: Object.assign(new Error('getaddrinfo'), { code: 'ENOTFOUND' }),
+      });
+    };
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError &&
+        error.code === 'NETWORK_ERROR' &&
+        error.retryable &&
+        !error.ambiguous,
+    );
+    assert.equal(
+      isPreConnectFailure(
+        new TypeError('fetch failed', {
+          cause: new AggregateError([
+            Object.assign(new Error('a'), { code: 'ECONNREFUSED' }),
+            Object.assign(new Error('b'), { code: 'EAI_AGAIN' }),
+          ]),
+        }),
+      ),
+      true,
+    );
+  });
+
+  it('timeout, reset ou resposta ilegível após conectar são ambíguos (campanha segue repetível)', async () => {
+    configure();
+    globalThis.fetch = async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    };
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError &&
+        error.code === 'AMBIGUOUS_TIMEOUT' &&
+        error.ambiguous &&
+        error.retryable,
+    );
+    globalThis.fetch = async () => {
+      throw new TypeError('fetch failed', {
+        cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+      });
+    };
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) => error instanceof WhatsAppApiError && error.ambiguous,
+    );
+    globalThis.fetch = async () => new Response('<html>', { status: 200 });
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError && error.code === 'AMBIGUOUS_TIMEOUT' && error.ambiguous,
+    );
+  });
+
+  it('erro HTTP com corpo ilegível mantém a classificação por status', async () => {
+    configure();
+    globalThis.fetch = async () => new Response('bad gateway', { status: 502 });
+    await assert.rejects(
+      sendMetaText({ destination: '5511999999999', text: 'Oi' }),
+      (error: unknown) =>
+        error instanceof WhatsAppApiError &&
+        error.code === 'HTTP_502' &&
+        error.retryable &&
+        !error.ambiguous,
     );
   });
 });

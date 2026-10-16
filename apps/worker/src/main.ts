@@ -10,12 +10,18 @@ import {
   type SendAutomaticReplyJob,
   type ProcessHandoffJob,
   type ProcessWebhookJob,
+  type SendHumanMessageJob,
+  type ProcessMediaJob,
 } from '@confirma/queue';
 import { Queue, Worker, type Job } from 'bullmq';
 import { processSendMessage } from './message-worker.js';
 import { processAutomaticReply } from './automatic-reply-worker.js';
+import { processHumanMessage, sweepQueuedHumanMessages } from './human-message-worker.js';
+import { closeMetaSendLimiter } from './meta-whatsapp-client.js';
 import { AUTOMATIC_REPLY_TEMPLATE_ID, automaticReplyEnabled } from './automatic-reply.js';
 import { processWebhook } from './webhook-worker.js';
+import { dispatchWebhookOutbox } from './outbox-dispatcher.js';
+import { expireMedia, processMedia, sweepPendingMedia } from './media/index.js';
 import { processHandoff } from './handoff-worker.js';
 import { parseSisregPdf } from './sisreg-parser.js';
 import { parseRegulamtXlsx } from './regulamt-parser.js';
@@ -138,13 +144,20 @@ const messageQueue = new Queue<MessagingJob>(QUEUES.messages, {
   connection: messageQueueConnection,
 });
 
+// Two limiters coexist on purpose: the BullMQ limiter below keeps the campaign
+// queue's pull rate exactly as before (also in DRY_RUN), while the Redis limiter
+// shared per phone_number_id (acquireSendPermit, LIVE only for campaign/automatic
+// reply) caps the aggregate Meta traffic of campaign + automatic + human senders
+// across all replicas. The token lets a denied permit delay the job without
+// consuming a BullMQ attempt.
 const messageWorker = new Worker<MessagingJob>(
   QUEUES.messages,
-  async (job) => {
+  async (job, token) => {
+    const deps = token ? { token } : {};
     if (job.name === 'send-automatic-reply') {
-      return processAutomaticReply(job as Job<SendAutomaticReplyJob>);
+      return processAutomaticReply(job as Job<SendAutomaticReplyJob>, deps);
     }
-    return processSendMessage(job as Job<SendMessageJob>);
+    return processSendMessage(job as Job<SendMessageJob>, deps);
   },
   {
     connection: messageWorkerConnection,
@@ -155,10 +168,39 @@ const messageWorker = new Worker<MessagingJob>(
     },
   },
 );
+// Human sends have no BullMQ limiter of their own: the shared per-number limiter
+// applies (priority "human").
+const humanMessageQueueConnection = createRedisConnection();
+const humanMessageWorkerConnection = createRedisConnection();
+const humanMessageQueue = new Queue<SendHumanMessageJob>(QUEUES.humanMessages, {
+  connection: humanMessageQueueConnection,
+});
+const humanMessageWorker = new Worker<SendHumanMessageJob>(
+  QUEUES.humanMessages,
+  async (job, token) => processHumanMessage(job, token ? { token } : {}),
+  {
+    connection: humanMessageWorkerConnection,
+    concurrency: Number(process.env.HUMAN_MESSAGE_WORKER_CONCURRENCY ?? 5),
+  },
+);
 const webhookConnection = createRedisConnection();
 const webhookWorker = new Worker<ProcessWebhookJob>(QUEUES.webhooks, processWebhook, {
   connection: webhookConnection,
   concurrency: Number(process.env.WEBHOOK_WORKER_CONCURRENCY ?? 10),
+});
+// Outbox do webhook: a API confirma o ACK após o commit no PostgreSQL; este
+// despachante publica eventos PENDING/FAILED vencidos mesmo que o Redis tenha
+// falhado no momento do recebimento.
+const webhookQueueConnection = createRedisConnection();
+const webhookQueue = new Queue<ProcessWebhookJob>(QUEUES.webhooks, {
+  connection: webhookQueueConnection,
+});
+const mediaQueueConnection = createRedisConnection();
+const mediaWorkerConnection = createRedisConnection();
+const mediaQueue = new Queue<ProcessMediaJob>(QUEUES.media, { connection: mediaQueueConnection });
+const mediaWorker = new Worker<ProcessMediaJob>(QUEUES.media, (job) => processMedia(job), {
+  connection: mediaWorkerConnection,
+  concurrency: Number(process.env.MEDIA_WORKER_CONCURRENCY ?? 2),
 });
 const handoffQueueConnection = createRedisConnection();
 const handoffWorkerConnection = createRedisConnection();
@@ -178,9 +220,14 @@ async function enqueueDueConvocations(): Promise<void> {
   await promoteDueFollowUps(now);
   await enqueuePendingHandoffs(now);
   await enqueuePendingAutomaticReplies();
+  await sweepQueuedHumanMessages(humanMessageQueue, { now }).catch(reportSchedulerError);
+  await sweepPendingMedia(mediaQueue, { olderThanMs: 5_000 }).catch(reportSchedulerError);
+  // Convocations paused by human service (humanHoldAt) are skipped by every
+  // scheduler step until a supervisor explicitly resumes automation.
   const due = await prisma.convocation.findMany({
     where: {
       status: 'SCHEDULED',
+      humanHoldAt: null,
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
@@ -194,6 +241,7 @@ async function enqueueDueConvocations(): Promise<void> {
         id: convocation.id,
         stage: convocation.stage,
         status: 'SCHEDULED',
+        humanHoldAt: null,
         campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
       },
       data: { status: 'QUEUED' },
@@ -207,6 +255,7 @@ async function reconcileFailedMessageJobs(now: Date): Promise<void> {
   const queued = await prisma.convocation.findMany({
     where: {
       status: 'QUEUED',
+      humanHoldAt: null,
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
@@ -215,7 +264,7 @@ async function reconcileFailedMessageJobs(now: Date): Promise<void> {
       stage: true,
       messages: {
         where: { attemptNumber: { lte: 3 } },
-        select: { stage: true, attemptNumber: true },
+        select: { stage: true, attemptNumber: true, status: true },
       },
     },
     orderBy: { nextActionAt: 'asc' },
@@ -226,9 +275,12 @@ async function reconcileFailedMessageJobs(now: Date): Promise<void> {
     if (!isSendableStage(convocation.stage)) continue;
     const attemptNumber =
       convocation.stage === 'FIRST' ? 1 : convocation.stage === 'SECOND' ? 2 : 3;
-    const messageExists = convocation.messages.some(
+    const stageMessage = convocation.messages.find(
       (message) => message.stage === convocation.stage && message.attemptNumber === attemptNumber,
     );
+    // A row still QUEUED was never submitted: the sender released it because of a
+    // human hold found right before the Meta call. It must be sent again on resume.
+    const messageExists = stageMessage !== undefined && stageMessage.status !== 'QUEUED';
     const job = await messageQueue.getJob(`send:${convocation.id}:${convocation.stage}`);
     const state = job ? await job.getState() : null;
 
@@ -273,7 +325,7 @@ async function enqueueMessageJob(
  * of truth while a convocation is waiting for a response. */
 async function reconcileWaitingStages(): Promise<void> {
   const waiting = await prisma.convocation.findMany({
-    where: { status: 'WAITING_RESPONSE', stage: { in: ['SECOND', 'THIRD'] } },
+    where: { status: 'WAITING_RESPONSE', humanHoldAt: null, stage: { in: ['SECOND', 'THIRD'] } },
     select: {
       id: true,
       stage: true,
@@ -345,6 +397,7 @@ async function promoteDueFollowUps(now: Date): Promise<void> {
     where: {
       status: 'WAITING_RESPONSE',
       stage: 'FIRST',
+      humanHoldAt: null,
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
@@ -354,6 +407,7 @@ async function promoteDueFollowUps(now: Date): Promise<void> {
     where: {
       status: 'WAITING_RESPONSE',
       stage: 'SECOND',
+      humanHoldAt: null,
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
@@ -366,6 +420,7 @@ async function finalizeNoResponseDue(now: Date): Promise<void> {
     where: {
       stage: 'THIRD',
       status: 'WAITING_RESPONSE',
+      humanHoldAt: null,
       nextActionAt: { lte: now },
       campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
     },
@@ -379,6 +434,7 @@ async function finalizeNoResponseDue(now: Date): Promise<void> {
           id: convocation.id,
           stage: 'THIRD',
           status: 'WAITING_RESPONSE',
+          humanHoldAt: null,
           nextActionAt: { lte: now },
         },
         data: {
@@ -417,8 +473,26 @@ const cleanupTimer = setInterval(
   () => void cleanupTemporaryFiles().catch((error: unknown) => reportCleanupError(error)),
   60 * 60 * 1_000,
 );
+let outboxRunning = false;
+const outboxTimer = setInterval(
+  () => {
+    if (outboxRunning) return;
+    outboxRunning = true;
+    void dispatchWebhookOutbox(webhookQueue)
+      .catch((error: unknown) => reportSchedulerError(error))
+      .finally(() => {
+        outboxRunning = false;
+      });
+  },
+  Number(process.env.OUTBOX_DISPATCH_INTERVAL_MS ?? 2_000),
+);
+const mediaRetentionTimer = setInterval(
+  () => void expireMedia().catch((error: unknown) => reportCleanupError(error)),
+  60 * 60 * 1_000,
+);
 void enqueueDueConvocations();
 void cleanupTemporaryFiles();
+void expireMedia().catch((error: unknown) => reportCleanupError(error));
 
 async function cleanupTemporaryFiles(): Promise<void> {
   const olderThan = new Date(
@@ -533,13 +607,26 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   clearInterval(scheduler);
   clearInterval(cleanupTimer);
+  clearInterval(outboxTimer);
+  clearInterval(mediaRetentionTimer);
   await worker.close();
+  await mediaWorker.close();
   await messageWorker.close();
+  await humanMessageWorker.close();
   await webhookWorker.close();
   await handoffWorker.close();
   await messageQueue.close();
   await handoffQueue.close();
+  await humanMessageQueue.close();
+  await webhookQueue.close();
+  await mediaQueue.close();
   await Promise.all([
+    webhookQueueConnection.quit(),
+    mediaQueueConnection.quit(),
+    mediaWorkerConnection.quit(),
+    closeMetaSendLimiter(),
+    humanMessageQueueConnection.quit(),
+    humanMessageWorkerConnection.quit(),
     importConnection.quit(),
     messageQueueConnection.quit(),
     messageWorkerConnection.quit(),

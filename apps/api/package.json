@@ -9,7 +9,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm build && node dist/webhooks/webhooks.service.test.js && node dist/imports/import-row.test.js",
+    "test": "pnpm build && node --test 'dist/**/*.test.js'",
     "test:e2e": "node e2e/whatsapp-campaign.mjs"
   },
   "dependencies": {

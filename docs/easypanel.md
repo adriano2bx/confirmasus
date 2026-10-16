@@ -135,6 +135,54 @@ serão processadas por ela.
 5. Faça uma campanha de homologação e confira banco, filas e painel.
 6. Quando aprovado, altere as duas chaves de modo para `MESSAGING_MODE=LIVE` e `HANDOFF_MODE=LIVE`; o EasyPanel reinicia os containers automaticamente.
 
+## Atendimento humano (inbox)
+
+A versão com inbox inclui a migration aditiva `20261016120000_whatsapp_human_inbox`. Ela é
+aplicada automaticamente pela API na inicialização (`prisma migrate deploy`), como as demais;
+nenhuma tabela ou coluna existente é removida. Faça backup do PostgreSQL antes de publicar.
+
+Variáveis novas (valores de exemplo em `.env.example`):
+
+| Serviço      | Variáveis                                                                                                                                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API          | `OPS_METRICS_TOKEN` (opcional, ≥ 24 caracteres; secret), `META_ACCEPTED_PHONE_NUMBER_IDS` (opcional), `INBOX_SSE_POLL_MS`                                                                                                    |
+| Worker       | `WEBHOOK_MAX_ATTEMPTS`, `WEBHOOK_CONTEXT_WAIT_ATTEMPTS`, `OUTBOX_DISPATCH_INTERVAL_MS`, `HUMAN_MESSAGE_WORKER_CONCURRENCY`, `MESSAGE_RATE_LIMIT_MAX_WAIT_MS`, `MESSAGE_RATE_LIMIT_HUMAN_RESERVE`, `MEDIA_WORKER_CONCURRENCY` |
+| Worker e API | `MEDIA_STORAGE_DIR`, `MEDIA_MAX_BYTES`, `MEDIA_RETENTION_DAYS`, `MEDIA_ALLOWED_MIME`, `MEDIA_SCAN_MODE`, `MEDIA_SCAN_COMMAND`, `MEDIA_SCAN_TIMEOUT_MS`, `MEDIA_DOWNLOAD_TIMEOUT_MS`, `MEDIA_MAX_ATTEMPTS`                    |
+
+Mídia recebida:
+
+- `MEDIA_STORAGE_DIR` precisa de um **volume persistente privado** (ex.: `/var/lib/confirma-sus/media`)
+  montado no worker (grava) e na API (entrega o arquivo ao atendente). No serviço único basta um
+  volume; com serviços separados, o mesmo volume deve estar montado nos dois.
+- A imagem não traz antivírus. Sem `MEDIA_SCAN_COMMAND`, a mídia fica em quarentena e não pode
+  ser baixada. Use `MEDIA_SCAN_MODE=disabled` somente com decisão explícita para homologação.
+- Com `MESSAGING_MODE=DRY_RUN` o worker não baixa mídia da Meta (fica recusada como `DRY_RUN`).
+
+Depois de publicar, crie a fila padrão e os atendentes. Ainda não há tela para equipes; use a API
+com a sessão do administrador (a senha é lida do terminal e não fica no histórico):
+
+```bash
+API=https://api.seu-dominio.com/api
+read -r -p 'E-mail admin: ' EMAIL; read -r -s -p 'Senha: ' PASS; echo
+JAR=$(mktemp)
+curl -sS -c "$JAR" -H 'content-type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASS\"}" "$API/auth/login" >/dev/null
+CSRF=$(awk '$6=="confirma_csrf_token"{print $7}' "$JAR")
+# Fila padrão
+curl -sS -b "$JAR" -H "x-csrf-token: $CSRF" -H 'content-type: application/json' \
+  -d '{"name":"Atendimento","slug":"atendimento","isDefault":true}' "$API/inbox/teams"
+# Membro (use o id do usuário em GET $API/users); role AGENT ou SUPERVISOR
+curl -sS -b "$JAR" -H "x-csrf-token: $CSRF" -H 'content-type: application/json' \
+  -d '{"userId":"<uuid>","role":"SUPERVISOR"}' "$API/inbox/teams/<team-id>/members"
+rm -f "$JAR"; unset PASS
+```
+
+Sem fila padrão, conversas novas ficam visíveis apenas para administradores. Conferências após o
+deploy: `/atendimento` carrega; `GET /api/ops/metrics` (admin ou `OPS_METRICS_TOKEN`) mostra
+`confirma_db_up 1` e `confirma_redis_up 1`; nenhum evento antigo em `PENDING`. Opcionalmente rode o
+backfill do histórico em dry-run (`docs/inbox-validacao.md`). Procedimentos de operação:
+[runbooks/inbox-operacao.md](runbooks/inbox-operacao.md).
+
 ## Segurança operacional
 
 - `META_WHATSAPP_ACCESS_TOKEN` e `META_APP_SECRET` são secrets, nunca variáveis de build, arquivo `.env` versionado ou configuração do frontend.

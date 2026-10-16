@@ -10,6 +10,9 @@ import { ReportsModule } from './reports/reports.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { UsersModule } from './users/users.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { InboxModule } from './inbox/inbox.module.js';
+import { MediaModule } from './media/media.module.js';
+import { OpsModule } from './ops/ops.module.js';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { AuditModule } from './audit/audit.module.js';
     BillingModule,
     UsersModule,
     AuditModule,
+    InboxModule,
+    MediaModule,
+    OpsModule,
   ],
   controllers: [HealthController],
 })

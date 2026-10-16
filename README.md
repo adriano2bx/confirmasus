@@ -45,6 +45,36 @@ separadamente, utilize os Dockerfiles em `docker/`. Consulte
 
 Para medir a capacidade da API em homologação, consulte o [guia de teste de carga](docs/teste-de-carga.md) e execute `pnpm load:test`.
 
+## Atendimento humano (inbox WhatsApp)
+
+A tela `/atendimento` reúne conversas por número de WhatsApp (`wa_id`), com filas por equipe,
+assumir/atribuir/transferir, estados, protocolo `ATD-AAAA-NNNNNNNN` sem dados pessoais, notas
+internas, vínculo manual com convocações, mídia recebida em armazenamento privado e atualização
+em tempo real (SSE com retomada por cursor). Contrato técnico e decisões:
+[docs/planning/whatsapp-human-inbox-contract.md](docs/planning/whatsapp-human-inbox-contract.md).
+
+Regra obrigatória: **o atendente nunca inicia conversa**. A resposta humana só é aceita depois
+que o contato respondeu a um template de campanha enviado pelo sistema (correlação pelo
+`context.id`/WAMID da Meta, mesmo `wa_id` e mesmo número empresarial) e somente dentro de
+24 horas desde essa resposta. A regra é verificada no servidor ao aceitar a mensagem e de novo
+imediatamente antes do envio à Meta; não existe envio de template pelo atendente. Notas internas
+ficam em tabela própria e nunca são enviadas.
+
+- O webhook da Meta responde somente depois de gravar os eventos no PostgreSQL; se o Redis cair,
+  o despachante de outbox do worker publica os eventos quando ele voltar.
+- Assumir ou atribuir uma conversa pausa os follow-ups das convocações relacionadas, inclusive
+  jobs já enfileirados. Resolver não retoma; a retomada é uma ação explícita de supervisor.
+- Envio humano com resultado ambíguo (timeout) fica `UNKNOWN` até a reconciliação pelo status da
+  Meta; não há reenvio automático.
+- Antes de usar: crie ao menos uma equipe marcada como padrão e adicione os atendentes; sem
+  equipe padrão, conversas novas ficam visíveis apenas para administradores.
+- Migração aditiva `20261016120000_whatsapp_human_inbox`. Backfill opcional do histórico:
+  `pnpm --filter @confirma/database exec tsx scripts/backfill-inbox.ts` (dry-run; `--apply`
+  grava de forma idempotente e nunca concede permissão de resposta).
+- Operação, métricas (`/api/ops/metrics`), dead-letter e procedimentos:
+  [docs/runbooks/inbox-operacao.md](docs/runbooks/inbox-operacao.md). Validação na VPS:
+  [docs/inbox-validacao.md](docs/inbox-validacao.md) e `scripts/vps-test/`.
+
 ## Pendências antes do piloto
 
 - Validar e ajustar o parser contra PDFs SISREG reais anonimizados.

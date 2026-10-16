@@ -71,6 +71,7 @@ enum ProcessingStatus {
   PROCESSED
   IGNORED
   FAILED
+  DEAD_LETTER
 }
 
 enum HandoffStatus {
@@ -88,16 +89,23 @@ enum ResponseAction {
 }
 
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
-  name         String
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  role         UserRole   @default(OPERATOR)
-  active       Boolean    @default(true)
-  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
-  auditLogs    AuditLog[]
+  id                     String                  @id @default(uuid()) @db.Uuid
+  name                   String
+  email                  String                  @unique
+  passwordHash           String                  @map("password_hash")
+  role                   UserRole                @default(OPERATOR)
+  active                 Boolean                 @default(true)
+  deletedAt              DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  auditLogs              AuditLog[]
+  teamMemberships        TeamMember[]
+  assignedConversations  Conversation[]          @relation("ConversationAssignee")
+  conversationMessages   ConversationMessage[]   @relation("ConversationMessageAuthor")
+  conversationNotes      ConversationNote[]
+  conversationActivities ConversationActivity[]
+  conversationReadStates ConversationReadState[]
+  conversationContexts   ConversationContext[]
 
   @@index([deletedAt])
   @@map("users")
@@ -196,23 +204,23 @@ model PatientPhone {
 }
 
 model Campaign {
-  id                 String         @id @default(uuid()) @db.Uuid
-  importId           String         @map("import_id") @db.Uuid
-  name               String
-  status             CampaignStatus @default(DRAFT)
-  firstActionAt      DateTime?      @map("first_action_at") @db.Timestamptz(3)
-  secondIntervalDays Int?           @map("second_interval_days")
-  secondStartTime    String?        @map("second_start_time")
-  thirdIntervalDays  Int?           @map("third_interval_days")
-  thirdStartTime     String?        @map("third_start_time")
-  finalResponseWindowDays Int        @default(1) @map("final_response_window_days")
-  startedAt          DateTime?      @map("started_at") @db.Timestamptz(3)
-  completedAt        DateTime?      @map("completed_at") @db.Timestamptz(3)
-  cancelledAt        DateTime?      @map("cancelled_at") @db.Timestamptz(3)
-  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
-  import             Import         @relation(fields: [importId], references: [id])
-  convocations       Convocation[]
+  id                      String         @id @default(uuid()) @db.Uuid
+  importId                String         @map("import_id") @db.Uuid
+  name                    String
+  status                  CampaignStatus @default(DRAFT)
+  firstActionAt           DateTime?      @map("first_action_at") @db.Timestamptz(3)
+  secondIntervalDays      Int?           @map("second_interval_days")
+  secondStartTime         String?        @map("second_start_time")
+  thirdIntervalDays       Int?           @map("third_interval_days")
+  thirdStartTime          String?        @map("third_start_time")
+  finalResponseWindowDays Int            @default(1) @map("final_response_window_days")
+  startedAt               DateTime?      @map("started_at") @db.Timestamptz(3)
+  completedAt             DateTime?      @map("completed_at") @db.Timestamptz(3)
+  cancelledAt             DateTime?      @map("cancelled_at") @db.Timestamptz(3)
+  createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  import                  Import         @relation(fields: [importId], references: [id])
+  convocations            Convocation[]
 
   @@index([status, firstActionAt])
   @@map("campaigns")
@@ -247,31 +255,36 @@ model Procedure {
 }
 
 model Convocation {
-  id              String              @id @default(uuid()) @db.Uuid
-  campaignId      String              @map("campaign_id") @db.Uuid
-  patientId       String              @map("patient_id") @db.Uuid
-  selectedPhoneId String?             @map("selected_phone_id") @db.Uuid
-  stage           ConvocationStage    @default(FIRST)
-  status          ConvocationStatus   @default(SCHEDULED)
-  nextActionAt    DateTime?           @map("next_action_at") @db.Timestamptz(3)
-  confirmedAt     DateTime?           @map("confirmed_at") @db.Timestamptz(3)
-  cancelledAt     DateTime?           @map("cancelled_at") @db.Timestamptz(3)
-  finishedAt      DateTime?           @map("finished_at") @db.Timestamptz(3)
-  version         Int                 @default(0)
-  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
-  campaign        Campaign            @relation(fields: [campaignId], references: [id])
-  patient         Patient             @relation(fields: [patientId], references: [id])
-  selectedPhone   PatientPhone?       @relation("ConvocationSelectedPhone", fields: [selectedPhoneId], references: [id])
-  records         ConvocationRecord[]
-  messages        Message[]
-  responses       MessageResponse[]
-  handoff         HandoffEvent?
+  id                      String                @id @default(uuid()) @db.Uuid
+  campaignId              String                @map("campaign_id") @db.Uuid
+  patientId               String                @map("patient_id") @db.Uuid
+  selectedPhoneId         String?               @map("selected_phone_id") @db.Uuid
+  stage                   ConvocationStage      @default(FIRST)
+  status                  ConvocationStatus     @default(SCHEDULED)
+  nextActionAt            DateTime?             @map("next_action_at") @db.Timestamptz(3)
+  confirmedAt             DateTime?             @map("confirmed_at") @db.Timestamptz(3)
+  cancelledAt             DateTime?             @map("cancelled_at") @db.Timestamptz(3)
+  finishedAt              DateTime?             @map("finished_at") @db.Timestamptz(3)
+  version                 Int                   @default(0)
+  /// Atendimento humano em curso: scheduler e sender NÃO avançam nem enviam follow-ups enquanto não nulo.
+  humanHoldAt             DateTime?             @map("human_hold_at") @db.Timestamptz(3)
+  humanHoldConversationId String?               @map("human_hold_conversation_id") @db.Uuid
+  createdAt               DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  campaign                Campaign              @relation(fields: [campaignId], references: [id])
+  patient                 Patient               @relation(fields: [patientId], references: [id])
+  selectedPhone           PatientPhone?         @relation("ConvocationSelectedPhone", fields: [selectedPhoneId], references: [id])
+  records                 ConvocationRecord[]
+  messages                Message[]
+  responses               MessageResponse[]
+  handoff                 HandoffEvent?
+  conversationContexts    ConversationContext[]
 
   @@unique([campaignId, patientId, selectedPhoneId])
   @@index([status, nextActionAt])
   @@index([campaignId, stage, status])
   @@index([selectedPhoneId])
+  @@index([humanHoldConversationId])
   @@map("convocations")
 }
 
@@ -305,30 +318,34 @@ model ConvocationRecord {
 }
 
 model Message {
-  id                 String            @id @default(uuid()) @db.Uuid
-  convocationId      String            @map("convocation_id") @db.Uuid
-  stage              ConvocationStage
-  attemptNumber      Int               @map("attempt_number")
-  templateName       String            @map("template_name")
-  templateId         String            @map("template_id")
-  phone              String
-  status             MessageStatus     @default(QUEUED)
-  providerMessageId  String?           @unique @map("provider_message_id")
-  providerWhatsAppId String?           @unique @map("provider_whatsapp_id")
-  idempotencyKey     String            @unique @map("idempotency_key")
-  submittedAt        DateTime?         @map("submitted_at") @db.Timestamptz(3)
-  sentAt             DateTime?         @map("sent_at") @db.Timestamptz(3)
-  deliveredAt        DateTime?         @map("delivered_at") @db.Timestamptz(3)
-  readAt             DateTime?         @map("read_at") @db.Timestamptz(3)
-  failedAt           DateTime?         @map("failed_at") @db.Timestamptz(3)
-  failureCode        String?           @map("failure_code")
-  failureReason      String?           @map("failure_reason")
-  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
-  convocation        Convocation       @relation(fields: [convocationId], references: [id])
-  events             MessageEvent[]
-  responses          MessageResponse[]
-  billingEvents      BillingEvent[]
+  id                  String                @id @default(uuid()) @db.Uuid
+  convocationId       String                @map("convocation_id") @db.Uuid
+  stage               ConvocationStage
+  attemptNumber       Int                   @map("attempt_number")
+  templateName        String                @map("template_name")
+  templateId          String                @map("template_id")
+  phone               String
+  /// phone_number_id da Meta que enviou; nulo em registros legados (antes do inbox).
+  senderPhoneNumberId String?               @map("sender_phone_number_id")
+  status              MessageStatus         @default(QUEUED)
+  providerMessageId   String?               @unique @map("provider_message_id")
+  providerWhatsAppId  String?               @unique @map("provider_whatsapp_id")
+  idempotencyKey      String                @unique @map("idempotency_key")
+  submittedAt         DateTime?             @map("submitted_at") @db.Timestamptz(3)
+  sentAt              DateTime?             @map("sent_at") @db.Timestamptz(3)
+  deliveredAt         DateTime?             @map("delivered_at") @db.Timestamptz(3)
+  readAt              DateTime?             @map("read_at") @db.Timestamptz(3)
+  failedAt            DateTime?             @map("failed_at") @db.Timestamptz(3)
+  failureCode         String?               @map("failure_code")
+  failureReason       String?               @map("failure_reason")
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  convocation         Convocation           @relation(fields: [convocationId], references: [id])
+  events              MessageEvent[]
+  responses           MessageResponse[]
+  billingEvents       BillingEvent[]
+  timelineEntry       ConversationMessage?  @relation("CampaignMessageTimeline")
+  repliedBy           ConversationMessage[] @relation("RepliedCampaignMessage")
 
   @@unique([convocationId, stage, attemptNumber])
   @@index([convocationId, createdAt])
@@ -337,19 +354,27 @@ model Message {
 }
 
 model MessageEvent {
-  id                String           @id @default(uuid()) @db.Uuid
-  messageId         String?          @map("message_id") @db.Uuid
-  providerMessageId String?          @map("provider_message_id")
-  providerEventId   String?          @map("provider_event_id")
-  eventType         String           @map("event_type")
-  deduplicationKey  String           @unique @map("deduplication_key")
-  receivedAt        DateTime         @default(now()) @map("received_at") @db.Timestamptz(3)
-  processedAt       DateTime?        @map("processed_at") @db.Timestamptz(3)
-  payload           Json
-  processingStatus  ProcessingStatus @default(PENDING) @map("processing_status")
-  processingError   String?          @map("processing_error")
-  message           Message?         @relation(fields: [messageId], references: [id])
+  id                 String           @id @default(uuid()) @db.Uuid
+  messageId          String?          @map("message_id") @db.Uuid
+  providerMessageId  String?          @map("provider_message_id")
+  providerEventId    String?          @map("provider_event_id")
+  eventType          String           @map("event_type")
+  deduplicationKey   String           @unique @map("deduplication_key")
+  receivedAt         DateTime         @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt        DateTime?        @map("processed_at") @db.Timestamptz(3)
+  payload            Json
+  processingStatus   ProcessingStatus @default(PENDING) @map("processing_status")
+  processingError    String?          @map("processing_error")
+  /// Outbox: tentativas de processamento e lease do despachante (SKIP LOCKED).
+  attempts           Int              @default(0)
+  nextAttemptAt      DateTime?        @map("next_attempt_at") @db.Timestamptz(3)
+  dispatchLeaseUntil DateTime?        @map("dispatch_lease_until") @db.Timestamptz(3)
+  phoneNumberId      String?          @map("phone_number_id")
+  waId               String?          @map("wa_id")
+  deadLetteredAt     DateTime?        @map("dead_lettered_at") @db.Timestamptz(3)
+  message            Message?         @relation(fields: [messageId], references: [id])
 
+  @@index([processingStatus, nextAttemptAt])
   @@index([processingStatus, receivedAt])
   @@index([providerMessageId])
   @@index([providerEventId])
@@ -408,4 +433,307 @@ model AuditLog {
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Atendimento humano (inbox). Contrato: docs/planning/whatsapp-human-inbox-contract.md
+// ---------------------------------------------------------------------------
+
+enum TeamMemberRole {
+  AGENT
+  SUPERVISOR
+}
+
+enum ConversationStatus {
+  OPEN
+  WAITING_CONTACT
+  SNOOZED
+  RESOLVED
+}
+
+enum ConversationMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ConversationMessageKind {
+  INBOUND
+  CAMPAIGN_REF
+  HUMAN_TEXT
+}
+
+enum ConversationMessageStatus {
+  RECEIVED
+  QUEUED
+  PROCESSING
+  SUBMITTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  UNKNOWN
+  BLOCKED
+}
+
+enum ReplyEligibility {
+  ELIGIBLE_TEMPLATE_REPLY
+  NOT_ELIGIBLE
+}
+
+enum ConversationActivityType {
+  CONVERSATION_OPENED
+  CONVERSATION_REOPENED
+  ASSIGNED
+  UNASSIGNED
+  TRANSFERRED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  CONTEXT_LINKED
+  CONTEXT_UNLINKED
+  AUTOMATION_PAUSED
+  AUTOMATION_RESUMED
+  HUMAN_SEND_BLOCKED
+  HUMAN_SEND_UNKNOWN
+  CONTACT_OPTED_OUT
+  CONTACT_OPTED_IN
+  NOTE_ADDED
+}
+
+enum ConversationContextSource {
+  TEMPLATE_REPLY
+  MANUAL
+}
+
+enum MediaAssetStatus {
+  PENDING
+  QUARANTINED
+  AVAILABLE
+  REJECTED
+  EXPIRED
+}
+
+model WhatsAppContact {
+  id            String         @id @default(uuid()) @db.Uuid
+  /// wa_id normalizado (somente dígitos). Chave de agrupamento do inbox.
+  waId          String         @unique @map("wa_id")
+  /// Nome de perfil informado pela Meta. NUNCA é prova de identidade clínica.
+  profileName   String?        @map("profile_name")
+  optedOutAt    DateTime?      @map("opted_out_at") @db.Timestamptz(3)
+  blockedAt     DateTime?      @map("blocked_at") @db.Timestamptz(3)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  conversations Conversation[]
+
+  @@map("whatsapp_contacts")
+}
+
+model Team {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  slug          String         @unique
+  /// Fila padrão para conversas novas. No máximo uma (índice parcial na migração).
+  isDefault     Boolean        @default(false) @map("is_default")
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  members       TeamMember[]
+  conversations Conversation[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId    String         @map("team_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  role      TeamMemberRole @default(AGENT)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  team      Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model Conversation {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  /// Protocolo sequencial sem PII (ATD-AAAA-NNNNNNNN), gerado por sequência PostgreSQL.
+  protocol              String                  @unique
+  contactId             String                  @map("contact_id") @db.Uuid
+  /// phone_number_id empresarial da Meta; conversas de números diferentes nunca se misturam.
+  phoneNumberId         String                  @map("phone_number_id")
+  teamId                String?                 @map("team_id") @db.Uuid
+  assigneeId            String?                 @map("assignee_id") @db.Uuid
+  status                ConversationStatus      @default(OPEN)
+  priority              Int                     @default(0)
+  /// Versão otimista: toda transição exige a versão lida e incrementa.
+  version               Int                     @default(0)
+  lastInboundAt         DateTime?               @map("last_inbound_at") @db.Timestamptz(3)
+  /// Último inbound ELEGÍVEL (resposta correlacionada a template de campanha). Âncora da janela humana.
+  lastEligibleInboundAt DateTime?               @map("last_eligible_inbound_at") @db.Timestamptz(3)
+  lastOutboundAt        DateTime?               @map("last_outbound_at") @db.Timestamptz(3)
+  lastActivityAt        DateTime                @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  snoozedUntil          DateTime?               @map("snoozed_until") @db.Timestamptz(3)
+  resolvedAt            DateTime?               @map("resolved_at") @db.Timestamptz(3)
+  createdAt             DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  contact               WhatsAppContact         @relation(fields: [contactId], references: [id])
+  team                  Team?                   @relation(fields: [teamId], references: [id])
+  assignee              User?                   @relation("ConversationAssignee", fields: [assigneeId], references: [id])
+  messages              ConversationMessage[]
+  notes                 ConversationNote[]
+  activities            ConversationActivity[]
+  readStates            ConversationReadState[]
+  contexts              ConversationContext[]
+  events                InboxEvent[]
+
+  @@index([teamId, status, lastActivityAt(sort: Desc), id])
+  @@index([assigneeId, status, lastActivityAt(sort: Desc), id])
+  @@index([status, lastActivityAt(sort: Desc), id])
+  @@index([contactId, phoneNumberId])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id                       String                       @id @default(uuid()) @db.Uuid
+  conversationId           String                       @map("conversation_id") @db.Uuid
+  direction                ConversationMessageDirection
+  kind                     ConversationMessageKind
+  status                   ConversationMessageStatus
+  /// Tipo Meta: text, button, interactive, image, document, audio, video, location, unknown...
+  contentType              String                       @map("content_type")
+  /// Texto (máx. 4096). Para CAMPAIGN_REF fica nulo: conteúdo e estado vêm de messages.
+  body                     String?
+  /// Para CAMPAIGN_REF: linha de campanha/resposta automática referenciada (sem cópia divergente).
+  campaignMessageId        String?                      @unique @map("campaign_message_id") @db.Uuid
+  /// WAMID: id do inbound ou id devolvido pela Meta no envio.
+  waMessageId              String?                      @unique @map("wa_message_id")
+  /// WAMID ao qual o inbound respondeu (context.id).
+  contextWaMessageId       String?                      @map("context_wa_message_id")
+  /// Linha de messages (template de campanha) à qual o inbound respondeu, quando correlacionada.
+  repliedCampaignMessageId String?                      @map("replied_campaign_message_id") @db.Uuid
+  replyEligibility         ReplyEligibility?            @map("reply_eligibility")
+  /// Código do motivo de inelegibilidade (ver domain/inbox/eligibility.ts).
+  eligibilityReason        String?                      @map("eligibility_reason")
+  authorId                 String?                      @map("author_id") @db.Uuid
+  idempotencyKey           String?                      @unique @map("idempotency_key")
+  sourceEventId            String?                      @unique @map("source_event_id") @db.Uuid
+  providerTimestamp        DateTime?                    @map("provider_timestamp") @db.Timestamptz(3)
+  submittedAt              DateTime?                    @map("submitted_at") @db.Timestamptz(3)
+  sentAt                   DateTime?                    @map("sent_at") @db.Timestamptz(3)
+  deliveredAt              DateTime?                    @map("delivered_at") @db.Timestamptz(3)
+  readAt                   DateTime?                    @map("read_at") @db.Timestamptz(3)
+  failedAt                 DateTime?                    @map("failed_at") @db.Timestamptz(3)
+  failureCode              String?                      @map("failure_code")
+  failureReason            String?                      @map("failure_reason")
+  createdAt                DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  conversation             Conversation                 @relation(fields: [conversationId], references: [id])
+  campaignMessage          Message?                     @relation("CampaignMessageTimeline", fields: [campaignMessageId], references: [id])
+  repliedCampaignMessage   Message?                     @relation("RepliedCampaignMessage", fields: [repliedCampaignMessageId], references: [id])
+  author                   User?                        @relation("ConversationMessageAuthor", fields: [authorId], references: [id])
+  media                    MediaAsset[]
+
+  @@index([conversationId, createdAt, id])
+  @@index([kind, status, createdAt])
+  @@map("conversation_messages")
+}
+
+/// Nota interna: tabela e API próprias. NUNCA é lida pelo sender nem enviada à Meta.
+model ConversationNote {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  authorId       String       @map("author_id") @db.Uuid
+  body           String
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  author         User         @relation(fields: [authorId], references: [id])
+
+  @@index([conversationId, createdAt, id])
+  @@map("conversation_notes")
+}
+
+/// Histórico append-only de atribuição, transferência, estado e intervenções.
+model ConversationActivity {
+  id             String                   @id @default(uuid()) @db.Uuid
+  conversationId String                   @map("conversation_id") @db.Uuid
+  actorId        String?                  @map("actor_id") @db.Uuid
+  type           ConversationActivityType
+  fromTeamId     String?                  @map("from_team_id") @db.Uuid
+  toTeamId       String?                  @map("to_team_id") @db.Uuid
+  fromUserId     String?                  @map("from_user_id") @db.Uuid
+  toUserId       String?                  @map("to_user_id") @db.Uuid
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation   Conversation             @relation(fields: [conversationId], references: [id])
+  actor          User?                    @relation(fields: [actorId], references: [id])
+
+  @@index([conversationId, createdAt, id])
+  @@map("conversation_activities")
+}
+
+model ConversationReadState {
+  conversationId    String       @map("conversation_id") @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  lastReadAt        DateTime     @map("last_read_at") @db.Timestamptz(3)
+  lastReadMessageId String?      @map("last_read_message_id") @db.Uuid
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@map("conversation_read_states")
+}
+
+/// Vínculo explícito conversa ↔ convocação. Nunca criado por correspondência de telefone.
+model ConversationContext {
+  conversationId String                    @map("conversation_id") @db.Uuid
+  convocationId  String                    @map("convocation_id") @db.Uuid
+  source         ConversationContextSource
+  linkedById     String?                   @map("linked_by_id") @db.Uuid
+  createdAt      DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation   Conversation              @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  convocation    Convocation               @relation(fields: [convocationId], references: [id])
+  linkedBy       User?                     @relation(fields: [linkedById], references: [id])
+
+  @@id([conversationId, convocationId])
+  @@index([convocationId])
+  @@map("conversation_contexts")
+}
+
+/// Feed monotônico para SSE/retomada por cursor. Só tipo e IDs, nunca conteúdo.
+model InboxEvent {
+  id             BigInt       @id @default(autoincrement())
+  conversationId String       @map("conversation_id") @db.Uuid
+  teamId         String?      @map("team_id") @db.Uuid
+  type           String
+  entityId       String?      @map("entity_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([teamId, id])
+  @@index([createdAt])
+  @@map("inbox_events")
+}
+
+model MediaAsset {
+  id                    String              @id @default(uuid()) @db.Uuid
+  conversationMessageId String              @map("conversation_message_id") @db.Uuid
+  providerMediaId       String              @unique @map("provider_media_id")
+  declaredMimeType      String?             @map("declared_mime_type")
+  detectedMimeType      String?             @map("detected_mime_type")
+  sizeBytes             Int?                @map("size_bytes")
+  sha256                String?
+  storageKey            String?             @map("storage_key")
+  status                MediaAssetStatus    @default(PENDING)
+  rejectReason          String?             @map("reject_reason")
+  attempts              Int                 @default(0)
+  expiresAt             DateTime?           @map("expires_at") @db.Timestamptz(3)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  conversationMessage   ConversationMessage @relation(fields: [conversationMessageId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([expiresAt])
+  @@map("media_assets")
 }

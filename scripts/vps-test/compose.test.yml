@@ -1,0 +1,64 @@
+# Ambiente descartável de teste na VPS (staging /srv/projetos/interno/confirmasus).
+# Sem portas publicadas: Postgres/Redis/API só na rede interna do Docker.
+# Nunca use dados reais. MESSAGING_MODE=DRY_RUN obrigatório.
+name: confirmasus-test
+
+x-env: &app-env
+  DATABASE_URL: postgresql://confirma:confirma@postgres:5432/confirma_sus_test?schema=public
+  REDIS_URL: redis://redis:6379
+  INTEGRATION_DATABASE_URL: postgresql://confirma:confirma@postgres:5432/confirma_sus_test?schema=public
+  INTEGRATION_REDIS_URL: redis://redis:6379
+  NODE_ENV: test
+  TZ: America/Sao_Paulo
+  APP_TIMEZONE: America/Sao_Paulo
+  MESSAGING_MODE: DRY_RUN
+  HANDOFF_MODE: DISABLED
+  JWT_SECRET: vps-test-only-secret-not-for-production-000000
+  META_APP_SECRET: vps-test-only-meta-secret
+  META_WHATSAPP_PHONE_NUMBER_ID: '100000000000001'
+  ADMIN_EMAIL: teste@confirmasus.local
+  ADMIN_PASSWORD: TesteSintetico123!
+  API_PORT: '3101'
+  MEDIA_STORAGE_DIR: /tmp/confirma-media
+  MEDIA_SCAN_MODE: disabled
+  OPS_METRICS_TOKEN: vps-test-only-metrics-token-0000
+  CI: 'true'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: confirma_sus_test
+      POSTGRES_USER: confirma
+      POSTGRES_PASSWORD: confirma
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U confirma -d confirma_sus_test']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  runner:
+    image: node:22-bookworm-slim
+    working_dir: /app
+    environment: *app-env
+    volumes:
+      - ../..:/app
+      - pnpm_store:/pnpm-store
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    entrypoint: ['bash', '-lc']
+    command: ['sleep infinity']
+
+volumes:
+  pnpm_store:
