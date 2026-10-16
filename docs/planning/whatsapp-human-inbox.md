@@ -5,6 +5,7 @@
 
 **Base:** `feat/whatsapp-meta-official` (`f30ef57`)
 **Data:** 2026-10-16
+**Linear:** [projeto P-ADR-2](https://linear.app/adriano2bx/project/confirma-sus-atendimento-humano-whatsapp-56e6b6a4ab35) · issue-mãe [ADR-15](https://linear.app/adriano2bx/issue/ADR-15/implementar-atendimento-humano-por-whatsapp-no-confirma-sus)
 
 ## 1. Objetivo e resultado
 
@@ -142,20 +143,20 @@ Testes necessários: unitários de máquina de estado/janela/idempotência; inte
 
 ## 9. Backlog proposto e dependências
 
-1. **Regras de produto e governança** — precede envio/piloto; critérios: decisões da seção 12 registradas e política de privacidade/opt-in validada.
-2. **ADR e contrato de eventos/Meta** — precede desenvolvimento; payloads, estados, idempotência, ordenação e limites aprovados; manter descrição do README consistente com a chave WhatsApp corrigida nesta branch.
-3. **Schema inbox/contact/conversation e migração** — depende 1/2; backfill ensaiado, sem perda, duplicidade ou vínculo ambíguo automático.
-4. **Recepção Meta durável, outbox e idempotência** — depende 2/3; ACK pós-commit e recuperação com Redis fora.
-5. **Linha do tempo canônica e relação campanha** — depende 3/4; inbound, outbound campanha e humano ordenados sem duplicar billing/reports.
-6. **Equipes, RBAC, protocolo, atribuição e transferência** — depende 3; operações atômicas/auditáveis.
-7. **Notas internas, estados, tags, prioridade e auditoria** — depende 3/6; notas isoladas da API Meta.
-8. **Janela, templates, opt-in/opt-out e sender compartilhado** — depende 1/3/5; bloqueios server-side, limiter agregado e status callback.
-9. **Pausa segura da automação de campanha** — depende 3/5/8; scheduler e job consumidor verificam bloqueio.
-10. **API e interface inbox** — depende 5/6/7/8; cursor, autorização, estados concorrentes e UX acessível.
-11. **SSE, cursor de retomada e notificações** — depende 4/10; reconexão não perde evento nem expõe conteúdo.
-12. **Mídia privada e validação** — depende 1/3/4; storage, malware/limites, expiração e autorização.
-13. **Métricas, alertas, runbooks e resiliência** — acompanha 4/8/11/12; idade de fila/Meta/DB/Redis observável e procedimento de recuperação.
-14. **Carga, segurança, migração e piloto** — depende de todas as anteriores; metas de 5k/10k e critérios da seção 6 aprovados em VPS; aceite de governança antes de dados reais.
+1. **Regras de produto e governança (ADR-16)** — precede envio/piloto; critérios: decisões da seção 12 registradas e política de privacidade/opt-in validada.
+2. **ADR e contrato de eventos/Meta (ADR-17)** — precede desenvolvimento; payloads, estados, idempotência, ordenação e limites aprovados; manter descrição do README consistente com a chave WhatsApp corrigida nesta branch.
+3. **Schema inbox/contact/conversation e migração (ADR-18)** — depende 1/2; backfill ensaiado, sem perda, duplicidade ou vínculo ambíguo automático.
+4. **Recepção Meta durável, outbox e idempotência (ADR-19)** — depende 2/3; ACK pós-commit e recuperação com Redis fora.
+5. **Linha do tempo canônica e relação campanha (ADR-20)** — depende 3/4; inbound, outbound campanha e humano ordenados sem duplicar billing/reports.
+6. **Equipes, RBAC, protocolo, atribuição e transferência (ADR-21)** — depende 3; operações atômicas/auditáveis.
+7. **Notas internas, estados, tags, prioridade e auditoria (ADR-22)** — depende 3/6; notas isoladas da API Meta.
+8. **Janela, templates, opt-in/opt-out e sender compartilhado (ADR-23)** — depende 1/3/5; bloqueios server-side, limiter agregado e status callback.
+9. **Pausa segura da automação de campanha (ADR-24)** — depende 3/5/8; scheduler e job consumidor verificam bloqueio.
+10. **API e interface inbox (ADR-25)** — depende 5/6/7/8; cursor, autorização, estados concorrentes e UX acessível.
+11. **SSE, cursor de retomada e notificações (ADR-26)** — depende 4/10; reconexão não perde evento nem expõe conteúdo.
+12. **Mídia privada e validação (ADR-27)** — depende 1/3/4; storage, malware/limites, expiração e autorização.
+13. **Métricas, alertas, runbooks e resiliência (ADR-28)** — acompanha 4/8/11/12; idade de fila/Meta/DB/Redis observável e procedimento de recuperação.
+14. **Carga, segurança, migração e piloto (ADR-29)** — depende de todas as anteriores; metas de 5k/10k e critérios da seção 6 aprovados em VPS; aceite de governança antes de dados reais.
 
 Critério global de liberação: migrations testadas em cópia; nenhuma mensagem/note perdida ou duplicada; aceite de janela/permissões; campanhas preservadas; carga/recuperação demonstradas; alertas, backup/restore e responsável de operação definidos.
 
