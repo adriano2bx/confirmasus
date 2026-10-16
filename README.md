@@ -24,7 +24,7 @@ Monorepo do MVP de automação das convocações SUS por WhatsApp.
 1. Faça login e envie um PDF.
 2. O worker extrai os registros e elimina o PDF depois de persistir o resultado.
 3. Abra a importação, revise alertas e registros inválidos e aprove os dados válidos.
-4. Crie uma campanha em `DRAFT`; pacientes são agrupados por CPF ou por nome normalizado + nascimento.
+4. Crie uma campanha em `DRAFT`; registros são agrupados pelo número de WhatsApp selecionado.
 5. Programe a campanha: scheduler + BullMQ executam primeira, segunda e terceira tentativas.
 6. Confirmação ou cancelamento por botão encerra a convocação; ausência de resposta avança tentativas e, depois da terceira, finaliza após `FINAL_RESPONSE_WINDOW_DAYS`.
 7. Consulte o painel em `/painel`, a lista em `/convocacoes` e exporte CSVs pelas rotas protegidas de relatórios.
