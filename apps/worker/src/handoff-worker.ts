@@ -160,7 +160,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     photo: null,
     messages: [
       {
-        senderType: 'system',
+        senderType: 'agent',
         type: 'text',
         createdAt,
         text: summary,
