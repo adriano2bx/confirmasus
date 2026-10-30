@@ -63,7 +63,7 @@ META_TEMPLATE_FIRST_NAME=primeira_convocacao_sus_unico
 META_TEMPLATE_SECOND_NAME=segunda_convocacao_sus
 META_TEMPLATE_THIRD_NAME=terceira_convocacao_sus
 AUTOMATIC_REPLY_ENABLED=true
-AUTOMATIC_REPLY_CONFIRM_TEXT=Recebemos sua confirmação. Aguarde, em breve nossa equipe dará continuidade ao atendimento.
+AUTOMATIC_REPLY_CONFIRM_TEXT=Obrigado pela sua confirmação. Aguarde, em breve nossa equipe dará continuidade ao atendimento pelo whatsapp ou por ligação através do número (65) 3184-0054
 AUTOMATIC_REPLY_CANCEL_TEXT=Seu cancelamento foi registrado. Não enviaremos novas convocações referentes a esta solicitação.
 ```
 
