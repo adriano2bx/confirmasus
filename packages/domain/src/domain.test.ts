@@ -10,18 +10,18 @@ import {
 } from './index.js';
 
 describe('normalização do domínio', () => {
-  it('normaliza nome e chave sem CPF', () => {
+  it('normaliza nome e agrupa pelo WhatsApp', () => {
     assert.equal(normalizePatientName('  Maria  da Sílva '), 'MARIA DA SILVA');
-    assert.equal(
-      patientGroupingKey({ name: 'Maria da Sílva', birthDate: '1960-05-10' }),
-      'NAME_DOB:MARIA DA SILVA:1960-05-10',
-    );
+    assert.equal(patientGroupingKey({ phones: ['(65) 99999-9999'] }), 'WHATSAPP:5565999999999');
   });
 
-  it('prioriza CPF na chave de agrupamento', () => {
+  it('usa o número selecionado para WhatsApp como chave', () => {
     assert.equal(
-      patientGroupingKey({ name: 'Nome', birthDate: '2000-01-01', cpf: '123.456.789-00' }),
-      'CPF:12345678900',
+      patientGroupingKey({
+        phones: ['+55 (65) 99999-9999'],
+        selectedPhone: '(65) 99999-9999',
+      }),
+      'WHATSAPP:5565999999999',
     );
   });
 
@@ -54,4 +54,3 @@ describe('respostas e templates', () => {
     assert.equal(templateForStage('THIRD').name, 'terceira_convocacao_sus');
   });
 });
-

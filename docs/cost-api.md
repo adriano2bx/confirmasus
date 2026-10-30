@@ -33,3 +33,9 @@ Authorization: Bearer TOKEN_ADMIN
 ```
 
 Valores decimais são retornados como string para evitar perda de precisão.
+
+Na integração com a WhatsApp Cloud API, os webhooks de status podem incluir os
+metadados de preço `billable`, `category` e `pricing_model`. Eles não incluem o
+valor monetário por mensagem; por isso `cost` e `currency` permanecem `null`, e
+`totalCost` não representa a fatura da Meta. Consulte a cobrança no WhatsApp
+Manager para obter os valores faturados.

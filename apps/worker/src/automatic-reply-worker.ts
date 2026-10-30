@@ -3,7 +3,7 @@ import { prisma } from '@confirma/database';
 import { QUEUES, type SendAutomaticReplyJob } from '@confirma/queue';
 import type { Job } from 'bullmq';
 import { automaticReplyDefinition } from './automatic-reply.js';
-import { GupshupRequestError, sendGupshupText } from './gupshup-client.js';
+import { WhatsAppApiError, sendMetaText } from './meta-whatsapp-client.js';
 
 export async function processAutomaticReply(job: Job<SendAutomaticReplyJob>): Promise<void> {
   const claimed = await prisma.message.updateMany({
@@ -21,20 +21,16 @@ export async function processAutomaticReply(job: Job<SendAutomaticReplyJob>): Pr
     if (mode === 'DRY_RUN') providerMessageId = `dry-run-automatic-reply-${randomUUID()}`;
     else if (mode === 'LIVE') {
       providerMessageId = (
-        await sendGupshupText({ destination: message.phone, text: definition.text })
+        await sendMetaText({ destination: message.phone, text: definition.text })
       ).providerMessageId;
     } else {
-      throw new GupshupRequestError(
-        'MESSAGING_MODE deve ser DRY_RUN ou LIVE.',
-        'INVALID_MODE',
-        false,
-      );
+      throw new WhatsAppApiError('MESSAGING_MODE deve ser DRY_RUN ou LIVE.', 'INVALID_MODE', false);
     }
   } catch (error) {
     const providerError =
-      error instanceof GupshupRequestError
+      error instanceof WhatsAppApiError
         ? error
-        : new GupshupRequestError('Falha inesperada ao enviar.', 'UNKNOWN', true);
+        : new WhatsAppApiError('Falha inesperada ao enviar.', 'UNKNOWN', true);
     const attempts = job.opts.attempts ?? 1;
     const willRetry = providerError.retryable && job.attemptsMade + 1 < attempts;
     await prisma.message.update({

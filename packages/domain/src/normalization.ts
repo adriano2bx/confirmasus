@@ -9,27 +9,21 @@ export function normalizePatientName(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Za-z\s]/g, ' ')
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toUpperCase();
 }
 
 export function patientGroupingKey(input: {
-  name: string;
-  birthDate?: string | null;
-  cpf?: string | null;
+  phones: readonly string[];
+  selectedPhone?: string | null;
 }): string {
-  const cpf = input.cpf?.replace(/\D/g, '');
-  if (cpf?.length === 11) {
-    return `CPF:${cpf}`;
-  }
-
-  if (input.birthDate) {
-    return `NAME_DOB:${normalizePatientName(input.name)}:${input.birthDate}`;
-  }
-
-  return `NAME:${normalizePatientName(input.name)}`;
+  const requested = input.selectedPhone ? normalizeBrazilianPhone(input.selectedPhone) : null;
+  const selected =
+    (requested?.valid && requested.mobile ? requested : null) ??
+    selectWhatsAppPhone(input.phones.map(normalizeBrazilianPhone));
+  return selected ? `WHATSAPP:${selected.normalized}` : '';
 }
 
 export function normalizeBrazilianPhone(value: string): NormalizedPhone {
@@ -55,4 +49,3 @@ export function normalizeBrazilianPhone(value: string): NormalizedPhone {
 export function selectWhatsAppPhone(phones: readonly NormalizedPhone[]): NormalizedPhone | null {
   return phones.find((phone) => phone.valid && phone.mobile) ?? null;
 }
-

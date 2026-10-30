@@ -7,7 +7,7 @@ O repositório possui um teste de carga sem dependências externas em `tests/loa
 - latência máxima e percentis P50, P95 e P99;
 - resultados separados por endpoint.
 
-O cenário envia eventos sintéticos para o webhook, consulta o painel e verifica o health check. Os eventos não chamam a Gupshup e não devem ser executados com `MESSAGING_MODE=LIVE` em produção.
+O cenário envia eventos sintéticos para o webhook, consulta o painel e verifica o health check. Os eventos não chamam a API da Meta e não devem ser executados com `MESSAGING_MODE=LIVE` em produção.
 
 ## Execução local
 
@@ -22,18 +22,18 @@ LOAD_TEST_PASSWORD='senha-de-homologacao' \
 pnpm load:test
 ```
 
-O login é opcional. Sem `LOAD_TEST_EMAIL` e `LOAD_TEST_PASSWORD`, o teste executa apenas health check e ingestão do webhook. O processo retorna código diferente de zero se qualquer requisição falhar.
+O login e a ingestão de webhooks são opcionais. Sem `LOAD_TEST_EMAIL`/`LOAD_TEST_PASSWORD` e `LOAD_TEST_META_APP_SECRET`, o teste executa somente health check. O processo retorna código diferente de zero se qualquer requisição falhar.
 
 ## Parâmetros
 
-| Variável | Padrão | Uso |
-|---|---:|---|
-| `LOAD_TEST_BASE_URL` | `http://127.0.0.1:3001/api` | URL da API, incluindo `/api` |
-| `LOAD_TEST_DURATION_SECONDS` | `60` | duração do teste |
-| `LOAD_TEST_CONCURRENCY` | `10` | workers concorrentes |
-| `LOAD_TEST_TIMEOUT_MS` | `10000` | timeout de cada requisição |
-| `LOAD_TEST_WEBHOOK_MODE` | `unique` | `unique` cria eventos novos; `duplicate` mede idempotência com o mesmo evento |
-| `LOAD_TEST_WEBHOOK_SECRET` | vazio | segredo do webhook, quando configurado |
+| Variável                     |                      Padrão | Uso                                                                           |
+| ---------------------------- | --------------------------: | ----------------------------------------------------------------------------- |
+| `LOAD_TEST_BASE_URL`         | `http://127.0.0.1:3001/api` | URL da API, incluindo `/api`                                                  |
+| `LOAD_TEST_DURATION_SECONDS` |                        `60` | duração do teste                                                              |
+| `LOAD_TEST_CONCURRENCY`      |                        `10` | workers concorrentes                                                          |
+| `LOAD_TEST_TIMEOUT_MS`       |                     `10000` | timeout de cada requisição                                                    |
+| `LOAD_TEST_WEBHOOK_MODE`     |                    `unique` | `unique` cria eventos novos; `duplicate` mede idempotência com o mesmo evento |
+| `LOAD_TEST_META_APP_SECRET`  |                       vazio | app secret usado para assinar eventos sintéticos do webhook                   |
 
 Para um teste rápido de homologação:
 
@@ -58,7 +58,7 @@ Não use a URL de produção sem janela de manutenção, monitoramento e aprova�
 
 ## Interpretação
 
-Como referência inicial para homologação, compare execuções com 5, 10 e 25 workers. Observe especialmente P95/P99, taxa de erro, crescimento da fila BullMQ, uso de CPU/memória e conexões do PostgreSQL. O resultado não é um certificado de capacidade: os limites finais dependem do tamanho dos PDFs, volume de registros, configuração da VPS, Redis, PostgreSQL e limites da Gupshup.
+Como referência inicial para homologação, compare execuções com 5, 10 e 25 workers. Observe especialmente P95/P99, taxa de erro, crescimento da fila BullMQ, uso de CPU/memória e conexões do PostgreSQL. O resultado não é um certificado de capacidade: os limites finais dependem do tamanho dos PDFs, volume de registros, configuração da VPS, Redis, PostgreSQL e limites da API da Meta.
 
 ## Teste e2e da campanha
 

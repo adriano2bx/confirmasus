@@ -3,7 +3,7 @@ import { ConvocationStage, prisma } from '@confirma/database';
 import { templateForStage, type MessageStage } from '@confirma/domain';
 import { QUEUES, type SendMessageJob } from '@confirma/queue';
 import type { Job } from 'bullmq';
-import { GupshupRequestError, sendGupshupTemplate } from './gupshup-client.js';
+import { WhatsAppApiError, sendMetaTemplate } from './meta-whatsapp-client.js';
 import { nextResponseDeadline } from './follow-up-schedule.js';
 
 function stageToMessageStage(stage: ConvocationStage): MessageStage | null {
@@ -55,7 +55,14 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
           attemptNumber: stage === 'FIRST' ? 1 : stage === 'SECOND' ? 2 : 3,
         },
       },
-      update: { status: 'PROCESSING', failureCode: null, failureReason: null, failedAt: null },
+      update: {
+        status: 'PROCESSING',
+        templateName: template.name,
+        templateId: process.env[template.idEnvironmentVariable] ?? template.defaultId,
+        failureCode: null,
+        failureReason: null,
+        failedAt: null,
+      },
       create: {
         convocationId: convocation.id,
         stage: convocation.stage,
@@ -83,25 +90,21 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
       const stage = stageToMessageStage(message.stage);
       if (!stage) throw new Error('Etapa de mensagem inválida');
       providerMessageId = (
-        await sendGupshupTemplate({
+        await sendMetaTemplate({
           destination: message.phone,
           stage,
-          templateId: message.templateId,
+          templateName: message.templateId,
           patientName: message.convocation.patient.displayName,
         })
       ).providerMessageId;
     } else {
-      throw new GupshupRequestError(
-        'MESSAGING_MODE deve ser DRY_RUN ou LIVE.',
-        'INVALID_MODE',
-        false,
-      );
+      throw new WhatsAppApiError('MESSAGING_MODE deve ser DRY_RUN ou LIVE.', 'INVALID_MODE', false);
     }
   } catch (error) {
     const providerError =
-      error instanceof GupshupRequestError
+      error instanceof WhatsAppApiError
         ? error
-        : new GupshupRequestError('Falha inesperada ao enviar.', 'UNKNOWN', true);
+        : new WhatsAppApiError('Falha inesperada ao enviar.', 'UNKNOWN', true);
     await prisma.$transaction(async (transaction) => {
       await transaction.message.update({
         where: { id: created.messageId },
@@ -138,8 +141,8 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
       data: {
         messageId: created.messageId,
         providerMessageId,
-        providerEventId: `dry-run-event-${randomUUID()}`,
-        eventType: mode === 'DRY_RUN' ? 'DRY_RUN_SUBMITTED' : 'GUPSHUP_SUBMITTED',
+        providerEventId: `${mode.toLowerCase()}-submitted-${randomUUID()}`,
+        eventType: mode === 'DRY_RUN' ? 'DRY_RUN_SUBMITTED' : 'META_SUBMITTED',
         deduplicationKey: `${mode.toLowerCase()}:${created.messageId}:submitted`,
         payload: { queue: QUEUES.messages, mode },
         processingStatus: 'PROCESSED',
@@ -149,9 +152,9 @@ export async function processSendMessage(job: Job<SendMessageJob>): Promise<void
     await transaction.convocation.updateMany({
       where: { id: created.convocationId, status: 'PROCESSING' },
       data: next
-        // Keep the current stage visible while its response window is open.
-        // The scheduler advances the stage only when nextActionAt is due.
-        ? { status: 'WAITING_RESPONSE', nextActionAt: next.at }
+        ? // Keep the current stage visible while its response window is open.
+          // The scheduler advances the stage only when nextActionAt is due.
+          { status: 'WAITING_RESPONSE', nextActionAt: next.at }
         : { status: 'WAITING_RESPONSE', nextActionAt: null },
     });
   });

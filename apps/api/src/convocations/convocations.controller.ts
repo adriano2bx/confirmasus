@@ -6,7 +6,6 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Patch,
   Query,
   Req,
   UseGuards,
@@ -15,7 +14,6 @@ import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard.js';
 import { ConvocationsService } from './convocations.service.js';
 import { UpdateConvocationStatusDto } from './update-convocation-status.dto.js';
 import { ConvocationsQueryDto } from './convocations-query.dto.js';
-import { UpdateConvocationPhoneDto } from './update-convocation-phone.dto.js';
 
 @Controller('convocations')
 @UseGuards(AuthGuard)
@@ -37,14 +35,5 @@ export class ConvocationsController {
       throw new ForbiddenException('Somente administradores podem alterar o status manualmente');
     }
     return this.convocations.updateStatus(id, input, request.user.sub);
-  }
-
-  @Patch(':id/phone')
-  updatePhone(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() input: UpdateConvocationPhoneDto,
-    @Req() request: AuthenticatedRequest,
-  ) {
-    return this.convocations.updatePhone(id, input.phoneId, request.user!.sub);
   }
 }

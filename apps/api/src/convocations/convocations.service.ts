@@ -161,40 +161,6 @@ export class ConvocationsService {
       return updated;
     });
   }
-
-  async updatePhone(id: string, phoneId: string, userId: string) {
-    return prisma.$transaction(async (transaction) => {
-      const convocation = await transaction.convocation.findUnique({ where: { id } });
-      if (!convocation) throw new BadRequestException('Convocação não encontrada');
-      if (['CONFIRMED', 'CANCELLED', 'FINISHED_NO_RESPONSE'].includes(convocation.status)) {
-        throw new ConflictException(
-          'O telefone de uma convocação finalizada não pode ser alterado',
-        );
-      }
-      if (['QUEUED', 'PROCESSING'].includes(convocation.status)) {
-        throw new ConflictException('Aguarde o processamento atual antes de alterar o telefone');
-      }
-      const phone = await transaction.patientPhone.findFirst({
-        where: { id: phoneId, patientId: convocation.patientId, valid: true, mobile: true },
-      });
-      if (!phone) throw new BadRequestException('Selecione um telefone celular válido do paciente');
-      const updated = await transaction.convocation.update({
-        where: { id },
-        data: { selectedPhoneId: phone.id, version: { increment: 1 } },
-      });
-      await transaction.auditLog.create({
-        data: {
-          userId,
-          eventType: 'CONVOCATION_PHONE_CHANGED',
-          entityType: 'convocation',
-          entityId: id,
-          previousData: { selectedPhoneId: convocation.selectedPhoneId },
-          newData: { selectedPhoneId: phone.id },
-        },
-      });
-      return updated;
-    });
-  }
 }
 
 function datePeriod(dateFrom?: string, dateTo?: string) {

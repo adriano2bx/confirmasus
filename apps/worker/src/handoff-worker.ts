@@ -126,7 +126,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     '';
   const records = convocation.records.map(({ sourceRecord }: any) => ({
     codigo: sourceRecord.codigoConvocacaoOrigem,
-    dataHora: sourceRecord.scheduledAt.toISOString(),
+    dataHora: sourceRecord.scheduledAt?.toISOString() ?? null,
     procedimentos: sourceRecord.procedures.map((procedure: any) => procedure.name),
   }));
   const summary = [
@@ -140,7 +140,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     'Solicitações:',
     ...records.map(
       (record: any) =>
-        `• Código ${record.codigo} | ${formatDateTime(record.dataHora)} | ${record.procedimentos.join(', ') || 'Sem procedimento informado'}`,
+        `• Código ${record.codigo} | ${record.dataHora ? formatDateTime(record.dataHora) : 'Data não informada'} | ${record.procedimentos.join(', ') || 'Sem procedimento informado'}`,
     ),
   ]
     .filter(Boolean)
@@ -160,7 +160,7 @@ function createPayload(event: any, config: ReturnType<typeof requiredConfigurati
     photo: null,
     messages: [
       {
-        senderType: 'system',
+        senderType: 'agent',
         type: 'text',
         createdAt,
         text: summary,

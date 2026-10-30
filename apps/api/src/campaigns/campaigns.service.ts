@@ -53,13 +53,15 @@ export class CampaignsService {
         const row = readImportedRow(record.importRow.normalizedData);
         if (!row.nome) continue;
         const key = patientGroupingKey({
-          name: row.nome,
-          birthDate: row.dataNascimento ? toIsoDate(row.dataNascimento) : null,
-          cpf: row.cpf,
+          phones: row.telefones,
+          selectedPhone: row.selectedPhone,
         });
-        const group = groups.get(key) ?? [];
+        // Approved rows have a valid WhatsApp number. Keep malformed legacy
+        // rows separate rather than merging them by another identity field.
+        const groupingKey = key || `RECORD:${record.id}`;
+        const group = groups.get(groupingKey) ?? [];
         group.push(record);
-        groups.set(key, group);
+        groups.set(groupingKey, group);
       }
 
       for (const records of groups.values()) {
@@ -79,12 +81,18 @@ export class CampaignsService {
             .map((value) => value.cns?.replace(/\D/g, ''))
             .find((value) => value?.length === 15) ?? null;
         const normalizedName = normalizePatientName(row.nome);
+        const allPhones = importedRows.flatMap((value) => value.telefones);
+        const normalizedPhones = allPhones.map(normalizeBrazilianPhone);
+        const requestedPhone = importedRows
+          .map((value) => value.selectedPhone)
+          .find((value): value is string => Boolean(value));
+        const requested = requestedPhone ? normalizeBrazilianPhone(requestedPhone) : null;
+        const selected =
+          (requested?.valid && requested.mobile ? requested : null) ??
+          selectWhatsAppPhone(normalizedPhones);
+        if (!selected) continue;
         const existingPatient = await transaction.patient.findFirst({
-          where: cpf
-            ? { cpf }
-            : birthDate
-              ? { normalizedName, birthDate }
-              : { normalizedName, birthDate: null },
+          where: { phones: { some: { normalizedValue: selected.normalized } } },
         });
         const patient = existingPatient
           ? await transaction.patient.update({
@@ -107,18 +115,8 @@ export class CampaignsService {
               },
             });
 
-        const allPhones = importedRows.flatMap((value) => value.telefones);
-        const normalizedPhones = allPhones.map(normalizeBrazilianPhone);
-        const requestedPhone = importedRows
-          .map((value) => value.selectedPhone)
-          .find((value): value is string => Boolean(value));
-        const requested = requestedPhone ? normalizeBrazilianPhone(requestedPhone) : null;
-        const selected =
-          (requested?.valid && requested.mobile ? requested : null) ??
-          selectWhatsAppPhone(normalizedPhones);
-        if (!selected) continue;
         await transaction.patientPhone.createMany({
-          data: normalizedPhones.map((phone) => ({
+          data: [selected].map((phone) => ({
             patientId: patient.id,
             originalValue: phone.original,
             normalizedValue: phone.normalized,

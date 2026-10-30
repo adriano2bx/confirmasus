@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 const baseUrl = (process.env.LOAD_TEST_BASE_URL ?? 'http://127.0.0.1:3001/api').replace(/\/$/, '');
 const durationSeconds = positiveInt('LOAD_TEST_DURATION_SECONDS', 60);
@@ -18,7 +18,7 @@ if (!isLocal && (!externalAllowed || confirmation !== 'I_UNDERSTAND')) {
 
 const email = process.env.LOAD_TEST_EMAIL;
 const password = process.env.LOAD_TEST_PASSWORD;
-const webhookSecret = process.env.LOAD_TEST_WEBHOOK_SECRET;
+const webhookSecret = process.env.LOAD_TEST_META_APP_SECRET;
 const webhookMode = process.env.LOAD_TEST_WEBHOOK_MODE ?? 'unique';
 const startedAt = Date.now();
 const deadline = startedAt + durationSeconds * 1_000;
@@ -72,7 +72,10 @@ const summary = {
       {
         requisicoes: items.length,
         erros: items.filter((item) => item.error || item.status < 200 || item.status >= 300).length,
-        p95_ms: percentile(items.map((item) => item.latencyMs).sort((a, b) => a - b), 0.95),
+        p95_ms: percentile(
+          items.map((item) => item.latencyMs).sort((a, b) => a - b),
+          0.95,
+        ),
       },
     ]),
   ),
@@ -86,10 +89,10 @@ async function worker(index) {
     const random = Math.random();
     if (accessToken && random < 0.55) {
       await request('/dashboard/overview', { headers: { authorization: `Bearer ${accessToken}` } });
-    } else if (random < 0.95) {
-      await request('/webhooks/gupshup', {
+    } else if (random < 0.95 && webhookSecret) {
+      await request('/webhooks/meta', {
         method: 'POST',
-        headers: webhookSecret ? { 'x-confirma-webhook-secret': webhookSecret } : {},
+        headers: {},
         body: webhookPayload(),
       });
     } else {
@@ -102,15 +105,32 @@ async function worker(index) {
 function webhookPayload() {
   const id = webhookMode === 'duplicate' ? 'load-test-fixed-event' : `load-test-${randomUUID()}`;
   return {
-    app: process.env.GUPSHUP_APP_NAME ?? 'DoctorbotConfirma',
-    type: 'message-event',
-    timestamp: new Date().toISOString(),
-    payload: {
-      type: 'sent',
-      id,
-      gsId: id,
-      payload: { whatsappMessageId: `load-test-whatsapp-${id}`, ts: Date.now() },
-    },
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: 'load-test-waba',
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { phone_number_id: 'load-test-phone' },
+              statuses: [
+                {
+                  id,
+                  status: 'sent',
+                  timestamp:
+                    webhookMode === 'duplicate'
+                      ? '1725000000'
+                      : String(Math.floor(Date.now() / 1000)),
+                  recipient_id: '5511999999999',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -121,6 +141,10 @@ async function request(path, options = {}) {
   if (options.body !== undefined) {
     headers['content-type'] = 'application/json';
     init.body = JSON.stringify(options.body);
+    if (path.endsWith('/webhooks/meta') && webhookSecret) {
+      headers['x-hub-signature-256'] =
+        `sha256=${createHmac('sha256', webhookSecret).update(init.body).digest('hex')}`;
+    }
   }
   let status = 0;
   let json = null;
@@ -145,7 +169,8 @@ async function request(path, options = {}) {
 
 function positiveInt(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
-  if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} deve ser um inteiro positivo.`);
+  if (!Number.isInteger(value) || value <= 0)
+    throw new Error(`${name} deve ser um inteiro positivo.`);
   return value;
 }
 

@@ -18,23 +18,15 @@ export function eventType(envelope: JsonRecord): string | null {
 export function providerMessageId(envelope: JsonRecord): string | null {
   const type = eventType(envelope);
   const payload = asRecord(envelope.payload);
-  const context = asRecord(payload.context);
-
-  // Respostas possuem um novo payload.id. O context.gsId aponta para a
-  // mensagem enviada pela aplicação e deve sempre ter prioridade.
-  return (
-    stringValue(payload.gsId) ??
-    stringValue(context.gsId) ??
-    (type === 'message-event' || type === 'billing-event' || type === 'billing'
-      ? stringValue(payload.id)
-      : null)
-  );
+  if (type === 'message') return stringValue(asRecord(payload.context).id);
+  return type === 'message-event' || type === 'billing-event' || type === 'billing'
+    ? stringValue(payload.id)
+    : null;
 }
 
 export function providerWhatsAppId(envelope: JsonRecord): string | null {
   const payload = asRecord(envelope.payload);
-  const details = asRecord(payload.payload);
-  return stringValue(details.whatsappMessageId) ?? stringValue(payload.id);
+  return stringValue(payload.id);
 }
 
 export function deduplicationKey(envelope: JsonRecord): string {
@@ -42,12 +34,7 @@ export function deduplicationKey(envelope: JsonRecord): string {
   const payload = asRecord(envelope.payload);
   const details = asRecord(payload.payload);
   const subtype = stringValue(payload.type)?.toLowerCase() ?? '';
-  const identity =
-    type === 'message'
-      ? stringValue(payload.id)
-      : (stringValue(payload.gsId) ??
-        stringValue(payload.id) ??
-        stringValue(asRecord(payload.context).gsId));
+  const identity = stringValue(payload.id);
   const eventTime = numberOrString(details.ts) ?? numberOrString(payload.timestamp);
   const stable = identity ? { type, subtype, identity, eventTime } : { type, subtype, payload };
   return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
@@ -73,10 +60,15 @@ export function inboundContent(envelope: JsonRecord): {
   const outerType = stringValue(payload.type)?.toLowerCase();
   const innerType = stringValue(content.type)?.toLowerCase();
   const isButton = innerType === 'button' || outerType === 'button_reply';
+  const buttonPayload = stringValue(content.buttonPayload)?.toUpperCase();
   return {
     text,
     isButton,
-    action: isButton ? normalizeButtonAction(text) : 'UNKNOWN',
+    action: isButton
+      ? buttonPayload === 'CONFIRM' || buttonPayload === 'CANCEL'
+        ? buttonPayload
+        : normalizeButtonAction(text)
+      : 'UNKNOWN',
     source: normalizePhone(
       stringValue(payload.source) ?? stringValue(asRecord(payload.sender).phone),
     ),

@@ -6,12 +6,12 @@ import {
   inboundContent,
   nextMessageStatus,
   providerMessageId,
-} from './gupshup-webhook.js';
+} from './webhook-events.js';
 
-describe('payloads de webhook da Gupshup', () => {
-  it('correlaciona clique pelo context.gsId e reconhece os botões oficiais', () => {
+describe('normalização de eventos do WhatsApp', () => {
+  it('reconhece a resposta de botão do webhook Meta', () => {
     const payload = inboundButton('Quero Confirmar');
-    assert.equal(providerMessageId(payload), 'gs-original-123');
+    assert.equal(providerMessageId(payload), null);
     assert.deepEqual(inboundContent(payload), {
       text: 'Quero Confirmar',
       isButton: true,
@@ -20,11 +20,23 @@ describe('payloads de webhook da Gupshup', () => {
     });
   });
 
+  it('usa o payload do botão mesmo que o texto exibido seja alterado', () => {
+    const payload = inboundButton('Sim');
+    const withPayload = {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        payload: { ...payload.payload.payload, buttonPayload: 'CONFIRM' },
+      },
+    };
+    assert.equal(inboundContent(withPayload).action, 'CONFIRM');
+  });
+
   it('diferencia delivered e read com o mesmo id do WhatsApp', () => {
     const delivered = messageEvent('delivered', 1_725_000_001);
     const read = messageEvent('read', 1_725_000_002);
     assert.notEqual(deduplicationKey(delivered), deduplicationKey(read));
-    assert.equal(providerMessageId(delivered), 'gs-original-123');
+    assert.equal(providerMessageId(delivered), 'wamid.original');
   });
 
   it('deduplica reentrega da mesma mensagem mesmo se o timestamp externo mudar', () => {
@@ -63,29 +75,23 @@ describe('payloads de webhook da Gupshup', () => {
 
 function inboundButton(text: string) {
   return {
-    app: 'DoctorbotConfirma',
     timestamp: 1_725_000_000_000,
-    version: 2,
     type: 'message',
     payload: {
       id: 'inbound-message-999',
       source: '5511999999999',
-      type: 'text',
+      type: 'button_reply',
       payload: { text, type: 'button' },
-      context: { id: 'wamid-original', gsId: 'gs-original-123' },
     },
   };
 }
 
 function messageEvent(type: string, ts: number) {
   return {
-    app: 'DoctorbotConfirma',
     timestamp: ts * 1_000,
-    version: 2,
     type: 'message-event',
     payload: {
-      id: 'wamid-original',
-      gsId: 'gs-original-123',
+      id: 'wamid.original',
       type,
       destination: '5511999999999',
       payload: { ts },

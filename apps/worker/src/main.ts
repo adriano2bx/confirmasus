@@ -40,8 +40,15 @@ const worker = new Worker<ParseImportJob>(
       return;
     }
     const data = await readFile(temporaryPath);
-    const sourceFile = await prisma.importFile.findUnique({ where: { id: importFileId }, select: { mimeType: true } });
-    let parsed = sourceFile?.mimeType.includes('spreadsheet') || sourceFile?.mimeType === 'application/zip'
+    const sourceFile = await prisma.importFile.findUnique({
+      where: { id: importFileId },
+      select: { mimeType: true, originalName: true },
+    });
+    const isSpreadsheet =
+      sourceFile?.mimeType.includes('spreadsheet') ||
+      sourceFile?.mimeType === 'application/zip' ||
+      sourceFile?.originalName.toLowerCase().endsWith('.xlsx');
+    let parsed = isSpreadsheet
       ? await parseRegulamtXlsx(new Uint8Array(data))
       : await parseSisregPdf(new Uint8Array(data));
     try {
@@ -104,7 +111,8 @@ const worker = new Worker<ParseImportJob>(
             invalid: 0,
           },
           status:
-            (parsed.layout === 'SISREG_V1' || parsed.layout === 'REGULAMT_XLSX') && parsed.rows.length > 0
+            (parsed.layout === 'SISREG_V1' || parsed.layout === 'REGULAMT_XLSX') &&
+            parsed.rows.length > 0
               ? 'READY_FOR_REVIEW'
               : 'REVIEW_REQUIRED',
         },
@@ -165,6 +173,7 @@ const handoffWorker = new Worker<ProcessHandoffJob>(QUEUES.handoffs, processHand
 async function enqueueDueConvocations(): Promise<void> {
   const now = new Date();
   await reconcileWaitingStages();
+  await reconcileFailedMessageJobs(now).catch(reportSchedulerError);
   await finalizeNoResponseDue(now);
   await promoteDueFollowUps(now);
   await enqueuePendingHandoffs(now);
@@ -180,22 +189,83 @@ async function enqueueDueConvocations(): Promise<void> {
   });
   for (const convocation of due) {
     if (!isSendableStage(convocation.stage)) continue;
-    await messageQueue.add(
-      'send-message',
-      { convocationId: convocation.id, stage: convocation.stage },
-      {
-        jobId: `send:${convocation.id}:${convocation.stage}`,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5_000 },
-        removeOnComplete: 1_000,
-        removeOnFail: 1_000,
+    const claimed = await prisma.convocation.updateMany({
+      where: {
+        id: convocation.id,
+        stage: convocation.stage,
+        status: 'SCHEDULED',
+        campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
       },
-    );
-    await prisma.convocation.updateMany({
-      where: { id: convocation.id, status: 'SCHEDULED' },
       data: { status: 'QUEUED' },
     });
+    if (!claimed.count) continue;
+    await enqueueMessageJob(convocation.id, convocation.stage);
   }
+}
+
+async function reconcileFailedMessageJobs(now: Date): Promise<void> {
+  const queued = await prisma.convocation.findMany({
+    where: {
+      status: 'QUEUED',
+      nextActionAt: { lte: now },
+      campaign: { status: { in: ['SCHEDULED', 'RUNNING'] } },
+    },
+    select: {
+      id: true,
+      stage: true,
+      messages: {
+        where: { attemptNumber: { lte: 3 } },
+        select: { stage: true, attemptNumber: true },
+      },
+    },
+    orderBy: { nextActionAt: 'asc' },
+    take: 250,
+  });
+
+  for (const convocation of queued) {
+    if (!isSendableStage(convocation.stage)) continue;
+    const attemptNumber =
+      convocation.stage === 'FIRST' ? 1 : convocation.stage === 'SECOND' ? 2 : 3;
+    const messageExists = convocation.messages.some(
+      (message) => message.stage === convocation.stage && message.attemptNumber === attemptNumber,
+    );
+    const job = await messageQueue.getJob(`send:${convocation.id}:${convocation.stage}`);
+    const state = job ? await job.getState() : null;
+
+    if (state === 'failed' && job) {
+      if (job.attemptsMade >= (job.opts.attempts ?? 1)) {
+        await markMessageJobFailed(
+          { convocationId: convocation.id, stage: convocation.stage },
+          job.failedReason || 'O job de envio falhou após esgotar as tentativas.',
+        );
+      }
+      continue;
+    }
+
+    // A job can finish before the database status changes to QUEUED. Such a
+    // job creates no message row; remove it and enqueue a fresh attempt.
+    if ((!job || state === 'completed') && !messageExists) {
+      if (job) await job.remove();
+      await enqueueMessageJob(convocation.id, convocation.stage);
+    }
+  }
+}
+
+async function enqueueMessageJob(
+  convocationId: string,
+  stage: SendMessageJob['stage'],
+): Promise<void> {
+  await messageQueue.add(
+    'send-message',
+    { convocationId, stage },
+    {
+      jobId: `send:${convocationId}:${stage}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: 1_000,
+      removeOnFail: 1_000,
+    },
+  );
 }
 
 /** Repairs records created by older workers that advanced the visible stage
@@ -407,6 +477,56 @@ worker.on('failed', async (job, error) => {
     })
     .catch(() => undefined);
 });
+
+messageWorker.on('failed', async (job, error) => {
+  if (!job || job.name !== 'send-message' || job.attemptsMade < (job.opts.attempts ?? 1)) return;
+  const data = job.data as SendMessageJob;
+  await markMessageJobFailed(data, error.message).catch((failure: unknown) => {
+    console.error(
+      'Falha ao registrar esgotamento de tentativas de envio:',
+      failure instanceof Error ? failure.message : 'falha não identificada',
+    );
+  });
+});
+
+async function markMessageJobFailed(data: SendMessageJob, reason: string): Promise<void> {
+  const attemptNumber = data.stage === 'FIRST' ? 1 : data.stage === 'SECOND' ? 2 : 3;
+  const failureReason = reason.slice(0, 500);
+  await prisma.$transaction(async (transaction) => {
+    await transaction.message.updateMany({
+      where: {
+        convocationId: data.convocationId,
+        stage: data.stage,
+        attemptNumber,
+        status: { in: ['QUEUED', 'PROCESSING'] },
+      },
+      data: {
+        status: 'FAILED',
+        failedAt: new Date(),
+        failureCode: 'QUEUE_RETRIES_EXHAUSTED',
+        failureReason,
+      },
+    });
+    const updated = await transaction.convocation.updateMany({
+      where: {
+        id: data.convocationId,
+        stage: data.stage,
+        status: { in: ['QUEUED', 'PROCESSING'] },
+      },
+      data: { status: 'SEND_ERROR', nextActionAt: null },
+    });
+    if (updated.count) {
+      await transaction.auditLog.create({
+        data: {
+          eventType: 'CONVOCATION_SEND_FAILED',
+          entityType: 'convocation',
+          entityId: data.convocationId,
+          metadata: { stage: data.stage, attemptNumber, failureReason },
+        },
+      });
+    }
+  });
+}
 
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;

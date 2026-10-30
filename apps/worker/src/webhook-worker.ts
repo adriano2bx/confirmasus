@@ -1,4 +1,4 @@
-import { Prisma, prisma, type MessageStatus } from '@confirma/database';
+import { Prisma, prisma, type ConvocationStatus, type MessageStatus } from '@confirma/database';
 import type { Job } from 'bullmq';
 import type { ProcessWebhookJob } from '@confirma/queue';
 import {
@@ -11,14 +11,19 @@ import {
   providerWhatsAppId,
   stringValue,
   type JsonRecord,
-} from './gupshup-webhook.js';
+} from './webhook-events.js';
 import {
   AUTOMATIC_REPLY_TEMPLATE_ID,
   automaticReplyDefinition,
   automaticReplyEnabled,
 } from './automatic-reply.js';
 
-const TERMINAL_CONVOCATION_STATUSES = ['CONFIRMED', 'CANCELLED', 'FINISHED_NO_RESPONSE'];
+const TERMINAL_CONVOCATION_STATUSES: ConvocationStatus[] = [
+  'CONFIRMED',
+  'CANCELLED',
+  'FINISHED_NO_RESPONSE',
+  'SEND_ERROR',
+];
 
 export async function processWebhook(job: Job<ProcessWebhookJob>): Promise<void> {
   const event = await prisma.messageEvent.findUniqueOrThrow({
@@ -29,7 +34,8 @@ export async function processWebhook(job: Job<ProcessWebhookJob>): Promise<void>
   const envelope = asRecord(event.payload);
   const type = eventType(envelope);
   const payload = asRecord(envelope.payload);
-  const messageId = providerMessageId(envelope) ?? event.providerMessageId;
+  const messageId =
+    providerMessageId(envelope) ?? (type === 'message' ? null : event.providerMessageId);
   const occurredAt = eventDate(envelope, event.receivedAt);
 
   try {
@@ -62,12 +68,13 @@ async function processBillingEvent(
 ) {
   if (!messageProviderId) return mark(eventId, 'IGNORED');
   const message = await findMessage(messageProviderId, stringValue(payload.id));
-  if (!message) return mark(eventId, 'IGNORED');
+  if (!message) throw new Error(`Mensagem ${messageProviderId} ainda não foi persistida`);
   const details = asRecord(payload.payload);
   const cost = decimalValue(details.cost) ?? decimalValue(payload.cost);
   const currency = stringValue(details.currency) ?? stringValue(payload.currency);
-  const category = stringValue(details.category) ?? stringValue(asRecord(details.pricing).category);
-  const billingProviderEventId = stringValue(payload.id);
+  const pricing = asRecord(details.pricing);
+  const category = stringValue(details.category) ?? stringValue(pricing.category);
+  const billingProviderEventId = stringValue(payload.providerEventId) ?? stringValue(payload.id);
   if (!billingProviderEventId) return mark(eventId, 'IGNORED');
 
   await prisma.$transaction(async (transaction) => {
@@ -78,12 +85,16 @@ async function processBillingEvent(
         messageId: message.id,
         providerMessageId: messageProviderId,
         providerEventId: billingProviderEventId,
-        billable: cost !== null,
+        billable: typeof details.billable === 'boolean' ? details.billable : cost !== null,
         category,
         status: stringValue(details.status),
         cost,
         currency,
         billingAt: occurredAt,
+        metadata: {
+          pricingModel: stringValue(pricing.pricing_model),
+          raw: pricing as Prisma.InputJsonObject,
+        },
       },
     });
     await completeEvent(transaction, eventId, message.id);
@@ -101,7 +112,7 @@ async function processMessageEvent(
   const whatsAppId = providerWhatsAppId(envelope);
   if (!messageProviderId || !statusType) return mark(eventId, 'IGNORED');
   const message = await findMessage(messageProviderId, whatsAppId);
-  if (!message) return mark(eventId, 'IGNORED');
+  if (!message) throw new Error(`Mensagem ${messageProviderId} ainda não foi persistida`);
   const update = statusUpdate(statusType, occurredAt, asRecord(payload.payload));
   if (!update) return mark(eventId, 'IGNORED', message.id);
 
@@ -133,6 +144,29 @@ async function processMessageEvent(
           : {}),
       },
     });
+    if (update.status === 'FAILED' && status === 'FAILED') {
+      const stopped = await transaction.convocation.updateMany({
+        where: {
+          id: message.convocationId,
+          status: { notIn: TERMINAL_CONVOCATION_STATUSES },
+        },
+        data: { status: 'SEND_ERROR', nextActionAt: null },
+      });
+      if (stopped.count > 0) {
+        await transaction.auditLog.create({
+          data: {
+            eventType: 'CONVOCATION_SEND_FAILED',
+            entityType: 'convocation',
+            entityId: message.convocationId,
+            metadata: {
+              messageId: message.id,
+              failureCode: update.failureCode,
+              failureReason: update.failureReason,
+            },
+          },
+        });
+      }
+    }
     await completeEvent(transaction, eventId, message.id);
   });
 }
@@ -145,7 +179,11 @@ async function processInboundMessage(
 ) {
   const content = inboundContent(envelope);
   const message = await findInboundMessage(messageProviderId, content.source);
-  if (!message) return mark(eventId, 'IGNORED');
+  if (!message) {
+    if (messageProviderId)
+      throw new Error(`Mensagem ${messageProviderId} ainda não foi persistida`);
+    return mark(eventId, 'IGNORED');
+  }
 
   await prisma.$transaction(async (transaction) => {
     await lockRow(transaction, 'convocations', message.convocationId);
@@ -253,8 +291,7 @@ async function processInboundMessage(
 
 async function findInboundMessage(messageProviderId: string | null, source: string | null) {
   if (messageProviderId) {
-    const correlated = await findMessage(messageProviderId, null);
-    if (correlated) return correlated;
+    return findMessage(messageProviderId, null);
   }
   if (!source) return null;
   return prisma.message.findFirst({
@@ -286,7 +323,7 @@ function statusUpdate(status: string, at: Date, details: JsonRecord) {
     return {
       status: 'FAILED' as const,
       at,
-      failureCode: textValue(details.code) ?? 'GUPSHUP_FAILED',
+      failureCode: textValue(details.code) ?? 'META_FAILED',
       failureReason: textValue(details.reason) ?? 'Falha reportada pelo provedor',
     };
   }

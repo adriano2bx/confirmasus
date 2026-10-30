@@ -223,7 +223,7 @@ model SourceRecord {
   importId               String              @map("import_id") @db.Uuid
   importRowId            String              @unique @map("import_row_id") @db.Uuid
   codigoConvocacaoOrigem String              @map("codigo_convocacao_origem")
-  scheduledAt            DateTime            @map("scheduled_at") @db.Timestamptz(3)
+  scheduledAt            DateTime?           @map("scheduled_at") @db.Timestamptz(3)
   createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   import                 Import              @relation(fields: [importId], references: [id])
   importRow              ImportRow           @relation(fields: [importRowId], references: [id])
@@ -268,7 +268,7 @@ model Convocation {
   responses       MessageResponse[]
   handoff         HandoffEvent?
 
-  @@unique([campaignId, patientId])
+  @@unique([campaignId, patientId, selectedPhoneId])
   @@index([status, nextActionAt])
   @@index([campaignId, stage, status])
   @@index([selectedPhoneId])
