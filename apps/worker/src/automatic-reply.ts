@@ -13,7 +13,7 @@ export function automaticReplyDefinition(action: AutomaticReplyAction) {
         templateName: 'resposta_automatica_confirmacao',
         text:
           process.env.AUTOMATIC_REPLY_CONFIRM_TEXT?.trim() ||
-          'Recebemos sua confirmação. Aguarde, em breve nossa equipe dará continuidade ao atendimento.',
+          'Obrigado pela sua confirmação. Aguarde, em breve nossa equipe dará continuidade ao atendimento pelo whatsapp ou por ligação através do número (65) 3184-0054',
       }
     : {
         attemptNumber: 5,
